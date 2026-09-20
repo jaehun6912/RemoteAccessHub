@@ -1,0 +1,13 @@
+bin/
+obj/
+artifacts/
+TestResults/
+*.user
+*.suo
+.vs/
+*.log
+selftest-results.txt
+selftest-screenshots/
+router-check-*.json
+router-check-*.png
+진단*.json

@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>AX2004T (Mock)</title>
+<base href="/ui/">
+<style>
+  html, body { margin: 0; height: 100%; background: #1b1b1b; color: #eee; font-family: 'Malgun Gothic', sans-serif; overflow: hidden; }
+  flutter-view { display: block; position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
+  flt-glass-pane { display: block; position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
+  flt-text-editing-host { display: block; position: absolute; left: 0; top: 0; }
+  flt-text-editing-host input { position: absolute; height: 32px; width: 220px; font-size: 14px; }
+  flt-semantics-host { display: block; position: absolute; left: 0; top: 0; width: 0; height: 0; overflow: visible; }
+  flt-semantics { display: block; position: absolute; overflow: visible; color: transparent; pointer-events: none; }
+  flt-semantics span { color: transparent; white-space: pre; }
+  .container { position: absolute; left: 0; top: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; background: #000; color: #ccc; z-index: 5; }
+</style>
+</head>
+<body>
+<!--
+  모의 ipTIME 관리 화면. 2026-09-14 실제 AX2004T(15.36.6) 진단 파일에서 확인한 특성을 재현한다.
+  - 경로 방식 주소: /ui/ (로그인·선택), /ui/sysinfo (관리 화면), /ui/wol (WOL)
+  - 앱 내부 이동은 history.pushState, 외부 popstate는 새 경로로 처리(Flutter 웹 엔진 동작)
+  - 왼쪽 메뉴: 스크롤 영역 안 항목의 접근성 노드 위치가 모두 y=68로 잘못 보고됨, 장면 텍스트 위치는 정확
+  - WOL 행: role=group 노드(라벨 "이름\nMAC") 안에 [PC 켜기] 버튼 노드가 자식으로 있음
+  - 장면 텍스트(flt-paragraph) 크기가 0으로 보고되는 옵션(zeroSizeParagraphs)
+  선택 화면([관리도구]/[설정마법사])은 실제 화면을 관찰하지 못해 공유기 앱 코드(버튼 위젯, 라벨=제목+부제목)를 근거로 만든 추정 구조다.
+  포인터 입력은 실제 Flutter처럼 좌표로 판정한다(isTrusted 이벤트). 접근성 노드의 click()은 해당 노드만 동작시킨다.
+-->
+<flt-semantics-placeholder role="button" aria-label="Enable accessibility" tabindex="0" style="position: absolute; left: -1px; top: -1px; width: 1px; height: 1px;"></flt-semantics-placeholder>
+<div id="loader" class="container">로딩 중입니다.</div>
+<flutter-view>
+  <flt-glass-pane></flt-glass-pane>
+  <flt-text-editing-host></flt-text-editing-host>
+  <flt-semantics-host></flt-semantics-host>
+</flutter-view>
+<script>
+(function () {
+  var state = {
+    view: 'loading',          // loading | login | modeSelect | admin | wol
+    adminChosen: false,       // 페이지를 새로 불러오면 초기화
+    semantics: false,
+    options: {
+      dialog: 'canvas',               // canvas | window | none
+      hideSemantics: false,
+      semanticsBroken: false,
+      zeroSizeParagraphs: false,
+      nestedRows: true,               // 실기기 구조
+      menuRectBug: true,              // 실기기 구조
+      menuExpanded: false,            // 특수 기능 그룹 펼침 여부
+      ignorePopState: false,          // 앱 내부 경로 이동이 동작하지 않는 상황
+      modeSelect: true,               // 로그인 후 선택 화면 표시
+      modeSelectButtons: true,        // 선택 화면 카드를 접근성 버튼으로 노출
+      modeSelectNoop: false,          // 접근성 click()에 반응하지 않는 카드
+      reloadShowsModeSelect: false,
+      wolUnderLogout: false,          // 'WOL 기능' 텍스트가 로그아웃 줄 위치에 겹쳐 그려짐(가려진 항목)
+      dialogButtonRole: true,         // 확인창 버튼을 role=button으로 노출
+      dialogSemClickNoop: false,      // 확인창 버튼이 접근성 click()에 반응하지 않음
+      dialogOkLabel: "확인",
+      modeSelectIgnoreTaps: 0,        // 로그인 직후 [관리도구]의 처음 N번 누름을 무시(공유기 앱 준비 전 상황 재현)
+      staleListAborts: 0,             // WOL 화면에 들어갈 때 목록 요청(wol/show)이 끊기는 횟수. 끊긴 동안(새로고침 전) wol/signal도 곧바로 끊김(2026-09-15 실기기 기록 재현)
+      abortSignals: 0,                // 목록과 상관없이 처음 N번의 wol/signal 요청을 끊음
+      closeAfterResponse: false,      // 실제 공유기 앱처럼 응답 본문을 다 읽은 뒤 통신 객체를 닫음(fetch AbortController.abort())
+      closeEarlySignals: 0            // 처음 N번의 wol/signal: 공유기가 처리하고 응답(200)을 보냈지만 페이지가 완료 전에 닫음 → 브라우저 기록 "200 받은 뒤 끊김"
+    },
+    list: [],
+    dialog: null,
+    snack: null,
+    ids: {},
+    idSeq: 0,
+    logoutCount: 0,
+    confirmCount: 0,
+    cancelCount: 0,
+    lastList: [],
+    listStale: false,
+    signalAborts: 0,
+    signalOk: 0,
+    taps: []
+  };
+
+  try { var saved = JSON.parse(sessionStorage.getItem("mockOptions") || "null"); if (saved) Object.keys(saved).forEach(function (k) { state.options[k] = saved[k]; }); } catch (e) {}
+  function saveOptions() { try { sessionStorage.setItem("mockOptions", JSON.stringify(state.options)); } catch (e) {} }
+
+  var glass = document.querySelector('flt-glass-pane');
+  var shadow = glass.attachShadow({ mode: 'open' });
+  shadow.innerHTML = '<style>' +
+    'flt-scene-host{display:block;position:absolute;left:0;top:0;right:0;bottom:0}' +
+    'flt-scene{display:block;position:absolute;left:0;top:0;right:0;bottom:0}' +
+    'flt-paragraph{display:block;position:absolute;white-space:pre;font-size:15px;line-height:20px;color:#eee}' +
+    'flt-paragraph.zero{width:0!important;height:0!important;overflow:visible}' +
+    '.box{position:absolute;border:1px solid #5a7;border-radius:4px;background:#243a2a}' +
+    '.menu{position:absolute;left:0;top:0;width:310px;height:720px;background:#111}' +
+    '.dlg{position:absolute;background:#333;border:1px solid #888;border-radius:6px}' +
+    '</style><flt-scene-host><flt-scene></flt-scene></flt-scene-host>';
+  var scene = shadow.querySelector('flt-scene');
+  var semHost = document.querySelector('flt-semantics-host');
+  var editHost = document.querySelector('flt-text-editing-host');
+  var placeholder = document.querySelector('flt-semantics-placeholder');
+
+  placeholder.addEventListener('click', function () {
+    placeholder.remove();
+    if (!state.options.semanticsBroken) state.semantics = true;
+    render();
+  });
+
+  function api(method, params, abortSoon) {
+    var body = params === undefined ? { method: method } : { method: method, params: params };
+    // abortSoon: 요청을 보낸 직후 페이지가 스스로 취소한다(브라우저에는 net::ERR_ABORTED로 보임)
+    var closeAfter = !abortSoon && state.options.closeAfterResponse;
+    var ctl = abortSoon || closeAfter ? new AbortController() : null;
+    var p = fetch(abortSoon ? '/cgi/service.cgi?abort=1' : '/cgi/service.cgi', { method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }, body: JSON.stringify(body), signal: ctl ? ctl.signal : undefined })
+      .then(function (r) {
+        if (!closeAfter) return r.json();
+        // 공유기 앱(main.dart.js의 서비스 호출 함수): 본문을 끝까지 읽고 해석한 뒤 finally에서 client.close() → abort()
+        return r.arrayBuffer().then(function (buf) {
+          var j = JSON.parse(new TextDecoder().decode(buf));
+          ctl.abort();
+          return j;
+        });
+      });
+    if (abortSoon) setTimeout(function () { ctl.abort(); }, 120);
+    return p;
+  }
+  // 응답 첫 조각(전체 JSON)을 읽고 스트림이 끝나기 전에 닫는다(서버는 ?hold=1로 연결을 열어 둠)
+  function apiCloseEarly(method, params) {
+    var ctl = new AbortController();
+    return fetch('/cgi/service.cgi?hold=1', { method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify({ method: method, params: params }), signal: ctl.signal })
+      .then(function (r) {
+        var reader = r.body.getReader(), buf = '', dec = new TextDecoder();
+        function pump() {
+          return reader.read().then(function (x) {
+            if (x.value) buf += dec.decode(x.value, { stream: true });
+            try { var j = JSON.parse(buf); ctl.abort(); return j; } catch (e) { if (x.done) throw e; return pump(); }
+          });
+        }
+        return pump();
+      });
+  }
+  function stableId(key) {
+    if (!state.ids[key]) state.ids[key] = 'flt-semantic-node-' + (++state.idSeq);
+    return state.ids[key];
+  }
+  function path() { return location.pathname.replace(/^\/ui\/?/, '').replace(/\/$/, ''); }
+  function go(p) { history.pushState({ flutterTag: true }, '', '/ui/' + p); route(); }
+
+  // ---------------- 위젯 ----------------
+  // kind: text | button | group | field | dialog
+  function T(key, text, x, y, w, h, o) { return ext({ kind: 'text', key: key, text: text, x: x, y: y, w: w, h: h }, o); }
+  function B(key, label, x, y, w, h, onTap, o) { return ext({ kind: 'button', key: key, label: label, text: label, x: x, y: y, w: w, h: h, onTap: onTap }, o); }
+  function G(key, label, x, y, w, h, children, o) { return ext({ kind: 'group', key: key, label: label, x: x, y: y, w: w, h: h, children: children || [] }, o); }
+  function ext(a, b) { if (b) for (var k in b) a[k] = b[k]; return a; }
+
+  function sideMenu() {
+    var items = [];
+    var y = 78;
+    function header(key, text, onTap) {
+      items.push(ext(T('m-' + key, text, 62, y + 11, text.length * 14, 20), { hit: { x: 0, y: y, w: 310, h: 42 }, onTap: onTap, semRect: state.options.menuRectBug ? { x: 0, y: 68, w: text.length * 12, h: 42 } : null, menuY: y }));
+      y += 42;
+    }
+    function sub(key, text, onTap) {
+      items.push(ext(T('m-' + key, text, 62, y + 11, text.length * 14, 20), { hit: { x: 0, y: y, w: 310, h: 42 }, onTap: onTap, semRect: state.options.menuRectBug ? { x: 0, y: 68, w: text.length * 12, h: 24 } : null, menuY: y }));
+      y += 42;
+    }
+    header('net', '네트워크 관리', noop);
+    header('wifi', '무선랜 관리', noop);
+    header('nat', 'NAT/라우터 관리', noop);
+    header('fw', '보안 기능', noop);
+    header('expert', '특수 기능', function () { state.options.menuExpanded = !state.options.menuExpanded; saveOptions(); render(); });
+    if (state.options.menuExpanded) {
+      sub('ddns', 'DDNS 설정', noop);
+      sub('wol', 'WOL 기능', function () { go('wol'); });
+      sub('hostscan', '호스트 검색', noop);
+    }
+    header('sys', '시스템 관리', noop);
+    // 스크롤 영역(68~585) 밖 항목은 그리지 않는다
+    items = items.filter(function (it) { return it.menuY >= 68 && it.menuY + 42 <= 585; });
+    if (state.options.wolUnderLogout) {
+      // 가려진 메뉴 항목: 텍스트는 로그아웃 줄 위에 그려지지만 실제로 눌리는 것은 로그아웃
+      items.push(ext(T('m-wol-hidden', 'WOL 기능', 62, 680, 61, 20), { semRect: state.options.menuRectBug ? { x: 0, y: 68, w: 68, h: 24 } : null }));
+    }
+    var scroll = G('menu-scroll', '', 0, 68, 310, 517, [G('menu-group', '', 0, 68, 310, 517, items, { role: 'group' })]);
+    var home = ext(T('menu-home', '홈으로 이동', 64, 626, 70, 20), { hit: { x: 0, y: 615, w: 310, h: 42 }, onTap: function () { go('sysinfo'); }, semRect: { x: 0, y: 615, w: 310, h: 42 } });
+    var logout = ext(T('menu-logout', '로그아웃', 64, 679, 52, 20), { hit: { x: 0, y: 668, w: 310, h: 42 }, onTap: doLogout, semRect: { x: 0, y: 668, w: 310, h: 42 } });
+    var toggle = B('menu-toggle', '', 256, 20, 40, 40, noop, { noPara: true });
+    return G('menu', '메뉴 접기', 0, 0, 310, 720, [toggle, scroll, home, logout], { bg: 'menu' });
+  }
+
+  function widgets() {
+    if (state.view === 'loading') return [T('loading', '로딩 중입니다...', 560, 340, 140, 20)];
+    if (state.view === 'login') {
+      return [
+        T('model', 'AX2004T', 688, 148, 82, 29),
+        T('lid', '로그인 이름', 414, 206, 70, 20),
+        { kind: 'field', key: 'fid', name: 'id', type: 'text', x: 414, y: 229, w: 355, h: 36 },
+        T('lpw', '로그인 암호', 414, 278, 68, 20),
+        { kind: 'field', key: 'fpw', name: 'pw', type: 'password', x: 414, y: 301, w: 355, h: 38 },
+        { kind: 'field', key: 'fcap', name: 'captcha', type: 'text', x: 414, y: 481, w: 355, h: 36 },
+        B('blogin', '로그인', 414, 543, 355, 44, doLogin)
+      ];
+    }
+    if (state.view === 'modeSelect') {
+      var tapAdmin = function () {
+        if (state.adminIgnore > 0) { state.adminIgnore--; state.taps.push('ignored:admin'); return; }
+        state.adminChosen = true; go('sysinfo');
+      };
+      var o = state.options;
+      function card(key, title, subtitle, y, onTap) {
+        // 공유기 앱 코드: 버튼 위젯 안에 아이콘 + (제목, 부제목). 접근성 라벨은 두 텍스트가 합쳐진 형태로 추정.
+        var semTap = o.modeSelectNoop ? noop : onTap;
+        return [
+          ext(B(key, title + '\n' + subtitle, 414, y, 355, 70, onTap, { noPara: true, semOnTap: semTap, noSem: !o.modeSelectButtons }), {}),
+          T(key + '-t', title, 500, y + 14, title.length * 15, 20, { noSem: o.modeSelectButtons }),
+          T(key + '-s', subtitle, 500, y + 38, subtitle.length * 12, 20, { noSem: o.modeSelectButtons })
+        ];
+      }
+      return [T('model', 'AX2004T', 688, 148, 82, 29)]
+        .concat(card('admin', '관리도구', '버전 15.36.6', 250, tapAdmin))
+        .concat(card('wizard', '설정마법사', '간편설정', 340, function () { state.taps.push('wizard'); }));
+    }
+    var w = [sideMenu()];
+    if (state.view === 'admin') {
+      w.push(G('content', '', 310, 0, 870, 660, [T('title', '시스템 요약 정보', 350, 13, 160, 31)]));
+      return w;
+    }
+    if (state.view === 'wol') {
+      var content = [
+        T('title', 'WOL 기능', 350, 13, 96, 31),
+        G('refresh', '페이지 새로고침', 1110, 9, 40, 40, [B('refresh-b', '', 1110, 9, 40, 40, function () { loadList(); }, { noPara: true })]),
+        T('hname', 'PC 이름 (' + state.list.length + '/500)', 340, 69, 530, 24, { paraText: 'PC 이름' }),
+        T('hmac', 'MAC 주소', 870, 69, 170, 24),
+        T('hsearch', '검색', 1040, 66, 30, 30, { noPara: true }),
+        T('hdel', '삭제', 1080, 66, 30, 30, { noPara: true }),
+        T('hadd', '추가', 1120, 66, 30, 30, { noPara: true })
+      ];
+      if (state.list.length === 0) content.push(T('empty', '등록된 WOL PC가 없습니다.', 360, 121, 250, 20));
+      var flatButtons = [];
+      state.list.forEach(function (pc, i) {
+        var y = 105 + i * 62;
+        var wakeFn = (function (p) { return function () { askWake(p); }; })(pc);
+        var btn = B('wake' + i, 'PC 켜기', 1094, y + 10, 56, 32, wakeFn, { noPara: true });
+        var paras = [
+          T('rn' + i, pc.name, 360, y + 16, pc.name.length * 9, 20, { noSem: true }),
+          T('rm' + i, pc.mac, 890, y + 16, 127, 20, { noSem: true }),
+          T('rb' + i, 'PC 켜기', 1098, y + 19, 48, 14, { noSem: true })
+        ];
+        if (state.options.nestedRows) {
+          content.push(G('row' + i, pc.name + '\n' + pc.mac, 330, y, 830, 52, [btn], { role: 'group' }));
+        } else {
+          content.push(G('row' + i, pc.name + '\n' + pc.mac, 330, y, 700, 52, [], {}));
+          flatButtons.push(btn);
+        }
+        content = content.concat(paras);
+      });
+      content = content.concat(flatButtons.reverse());
+      w.push(G('content', '', 310, 0, 870, 660, content, { role: 'dialog' }));
+      if (state.dialog) {
+        // 실기기 확인창(2026-09-14 화면): 제목 "알림", 문구 아래 한 줄에 [취소] [확인]이 반씩 나란히
+        var okLabel = state.options.dialogOkLabel || "확인";
+        var bo = function () { var o = { noPara: true }; if (!state.options.dialogButtonRole) o.semKind = "node"; if (state.options.dialogSemClickNoop) o.semOnTap = noop; return o; };
+        w.push(G("dlg", "", 426, 288, 320, 143, [
+          T("dtitle", "알림", 446, 302, 30, 20),
+          T("dtext", state.dialog.text, 480, 344, 140, 20),
+          B("dcancel", "취소", 426, 388, 159, 43, cancelDialog, bo()),
+          T("dcancel-t", "취소", 492, 400, 28, 20, { noSem: true }),
+          B("dok", okLabel, 586, 388, 160, 43, confirmDialog, bo()),
+          T("dok-t", okLabel, 652, 400, 28, 20, { noSem: true })
+        ], { role: "dialog", bg: "dlg", modal: true }));
+      }
+      if (state.snack) w.push(T('snack', state.snack, 420, 600, 260, 24));
+    }
+    return w;
+  }
+  function noop() {}
+
+  // ---------------- 렌더링 ----------------
+  function px(v) { return v + 'px'; }
+  function drawVisual(it) {
+    if (it.bg) {
+      var bg = document.createElement('div');
+      bg.className = it.bg;
+      bg.style.left = px(it.x); bg.style.top = px(it.y); bg.style.width = px(it.w); bg.style.height = px(it.h);
+      scene.appendChild(bg);
+    }
+    if (it.kind === 'text' && !it.noPara) {
+      var p = document.createElement('flt-paragraph');
+      p.textContent = it.paraText || it.text;
+      p.style.left = px(it.x); p.style.top = px(it.y); p.style.width = px(it.w); p.style.height = px(it.h);
+      if (state.options.zeroSizeParagraphs) p.className = 'zero';
+      scene.appendChild(p);
+    } else if (it.kind === 'button') {
+      var b = document.createElement('div');
+      b.className = 'box';
+      b.style.left = px(it.x); b.style.top = px(it.y); b.style.width = px(it.w); b.style.height = px(it.h);
+      scene.appendChild(b);
+      if (!it.noPara && it.text) {
+        var t = document.createElement('flt-paragraph');
+        t.textContent = it.text;
+        t.style.left = px(it.x + 8); t.style.top = px(it.y + 8); t.style.width = px(Math.max(10, it.w - 16)); t.style.height = px(20);
+        if (state.options.zeroSizeParagraphs) t.className = 'zero';
+        scene.appendChild(t);
+      }
+    } else if (it.kind === 'field') {
+      var inp = document.createElement('input');
+      inp.type = it.type; inp.name = it.name; inp.autocomplete = 'off';
+      inp.style.left = px(it.x); inp.style.top = px(it.y);
+      inp.setAttribute('data-mock', it.name);
+      editHost.appendChild(inp);
+    }
+    (it.children || []).forEach(drawVisual);
+  }
+
+  function semNode(it, px0, py0) {
+    if (it.noSem) return null;
+    var r = it.semRect || { x: it.x, y: it.y, w: it.w, h: it.h };
+    var n = document.createElement('flt-semantics');
+    n.id = stableId(state.view + ':' + it.key);
+    n.style.left = px(r.x - px0); n.style.top = px(r.y - py0); n.style.width = px(r.w); n.style.height = px(r.h);
+    if (it.kind === 'text') {
+      var s = document.createElement('span'); s.textContent = it.text; n.appendChild(s);
+    } else if (it.kind === "button") {
+      if (it.semKind !== "node") n.setAttribute("role", "button");
+      n.setAttribute('aria-label', it.label);
+      var tap = it.semOnTap || it.onTap;
+      n.addEventListener('click', function (e) { if (!e.isTrusted) { state.taps.push('sem:' + it.key); tap && tap(); } });
+    } else if (it.kind === 'field') {
+      var fi = document.createElement('input'); fi.type = it.type; fi.tabIndex = -1; fi.style.opacity = '0'; n.appendChild(fi);
+    } else if (it.kind === 'group') {
+      if (it.role) n.setAttribute('role', it.role);
+      if (it.label) n.setAttribute('aria-label', it.label);
+    }
+    (it.children || []).forEach(function (c) { var cn = semNode(c, r.x, r.y); if (cn) n.appendChild(cn); });
+    return n;
+  }
+
+  function render() {
+    scene.innerHTML = '';
+    editHost.innerHTML = '';
+    semHost.innerHTML = '';
+    var list = widgets();
+    if (!state.options.hideSemantics) list.forEach(drawVisual);
+    if (state.semantics && !state.options.hideSemantics && !state.options.semanticsBroken) {
+      var root = document.createElement('flt-semantics');
+      root.id = 'flt-semantic-node-0';
+      root.style.left = '0px'; root.style.top = '0px'; root.style.width = '1180px'; root.style.height = '720px';
+      semHost.appendChild(root);
+      list.forEach(function (it) { var n = semNode(it, 0, 0); if (n) root.appendChild(n); });
+    }
+    // 입력칸은 접근성과 무관하게 편집 호스트에 있어야 한다
+    if (state.view === 'login' && (state.options.semanticsBroken || !state.semantics)) { /* already drawn */ }
+  }
+
+  // ---------------- 좌표 입력(실제 마우스) ----------------
+  function hitList(items, out) {
+    items.forEach(function (it) {
+      if (it.onTap) out.push({ it: it, r: it.hit || { x: it.x, y: it.y, w: it.w, h: it.h } });
+      if (it.children) hitList(it.children, out);
+    });
+    return out;
+  }
+  document.addEventListener('click', function (e) {
+    if (!e.isTrusted) return;
+    var list = widgets();
+    var modal = list.filter(function (w) { return w.modal; })[0];
+    var targets = hitList(modal ? [modal] : list, []);
+    for (var i = targets.length - 1; i >= 0; i--) {
+      var t = targets[i], r = t.r;
+      if (e.clientX >= r.x && e.clientX <= r.x + r.w && e.clientY >= r.y && e.clientY <= r.y + r.h) {
+        state.taps.push('ptr:' + t.it.key);
+        t.it.onTap();
+        return;
+      }
+    }
+  }, true);
+
+  // ---------------- 동작 ----------------
+  function doLogin() {
+    var id = (editHost.querySelector('[data-mock=id]') || {}).value || '';
+    var pw = (editHost.querySelector('[data-mock=pw]') || {}).value || '';
+    var cap = (editHost.querySelector('[data-mock=captcha]') || {}).value || '';
+    return api('session/login', { id: id, pw: pw, captcha: cap }).then(function (j) {
+      if (j && j.result && j.result.login) {
+        state.adminChosen = false;
+        if (state.options.modeSelect) { state.adminIgnore = state.options.modeSelectIgnoreTaps || 0; state.view = 'modeSelect'; render(); }
+        else { state.adminChosen = true; go('sysinfo'); }
+        return true;
+      }
+      return false;
+    });
+  }
+  function doLogout() {
+    state.logoutCount++;
+    return api('session/logout').then(function () { state.adminChosen = false; history.replaceState(null, '', '/ui/'); route(); });
+  }
+  function askWake(pc) {
+    state.confirmPath = state.options.dialog;
+    if (state.options.dialog === 'none') return sendSignal(pc);
+    if (state.options.dialog === 'window') {
+      var answer = window.confirm('PC를 켜시겠습니까?');
+      state.confirmAnswer = answer;
+      if (answer) return sendSignal(pc);
+      return Promise.resolve(false);
+    }
+    state.dialog = { text: 'PC를 켜시겠습니까?', pc: pc };
+    render();
+    return Promise.resolve(true);
+  }
+  function confirmDialog() {
+    if (state.dialog) state.confirmCount++;
+    var pc = state.dialog && state.dialog.pc;
+    state.dialog = null;
+    render();
+    return pc ? sendSignal(pc) : Promise.resolve(false);
+  }
+  function cancelDialog() { if (state.dialog) state.cancelCount++; state.dialog = null; render(); }
+  function sendSignal(pc) {
+    if (state.options.closeEarlySignals > 0) {
+      state.options.closeEarlySignals--; saveOptions();
+      return apiCloseEarly('wol/signal', [pc.mac]).then(function (j) {
+        if (j && j.result) { state.signalOk++; state.snack = 'PC를 켜는 중입니다.'; render(); setTimeout(function () { state.snack = null; render(); }, 3000); return true; }
+        return false;
+      }, function () { state.signalAborts++; return false; });
+    }
+    // 목록 요청이 끊긴 채면(실기기 기록) 또는 abortSignals가 남아 있으면 페이지가 요청을 곧바로 취소한다.
+    var abort = state.listStale;
+    if (!abort && state.options.abortSignals > 0) { state.options.abortSignals--; saveOptions(); abort = true; }
+    return api('wol/signal', [pc.mac], abort).then(function (j) {
+      if (j && j.error) {
+        if (j.error.code === -31998) { history.replaceState(null, '', '/ui/'); route(); return false; }
+        state.snack = '오류: ' + j.error.message; render(); setTimeout(function () { state.snack = null; render(); }, 2500);
+        return false;
+      }
+      state.signalOk++;
+      state.snack = 'PC를 켜는 중입니다.'; render();
+      setTimeout(function () { state.snack = null; render(); }, 3000);
+      return true;
+    }, function () { state.signalAborts++; return false; });
+  }
+  function loadList(abortSoon) {
+    return api('wol/show', undefined, abortSoon).then(function (j) {
+      if (j && j.error) return;
+      state.list = (j.result && j.result.list) || [];
+      state.lastList = state.list;
+      state.listStale = false;
+      render();
+    }, function () { /* 끊김: 이전 목록을 그대로 보여 주고 끊긴 상태 유지 */ });
+  }
+
+  function route() {
+    var p = path();
+    return api('session/info').then(function (j) {
+      var authed = !!(j && j.result && !j.error);
+      if (!authed) {
+        state.view = 'login';
+        if (p !== '') history.replaceState(null, '', '/ui/');
+        render();
+        return;
+      }
+      if (!state.adminChosen && (p === '' || state.options.reloadShowsModeSelect) && state.options.modeSelect) {
+        state.view = 'modeSelect'; render(); return;
+      }
+      if (p === 'wol') {
+        state.view = 'wol';
+        if (state.options.staleListAborts > 0) {
+          // 실기기처럼 목록 요청이 끊겨도 화면에는 이전 목록이 그려져 있다.
+          state.options.staleListAborts--; saveOptions();
+          state.list = state.lastList || []; state.listStale = true; render(); loadList(true);
+        } else {
+          state.list = []; render(); loadList();
+        }
+        return;
+      }
+      if (p === '') { history.replaceState({ flutterTag: true }, '', '/ui/sysinfo'); }
+      state.view = 'admin';
+      render();
+    });
+  }
+
+  // Flutter 웹 엔진처럼: Flutter 표식이 없는 popstate는 "주소 직접 입력"으로 보고 새 경로를 연다.
+  window.addEventListener('popstate', function (e) {
+    if (state.options.ignorePopState) return;
+    if (e.state && e.state.flutterTag) { route(); return; }
+    history.replaceState({ flutterTag: true }, '', location.pathname);
+    route();
+  });
+
+  window.__mock = {
+    login: function (id, pw, cap) {
+      if (state.view !== 'login') return Promise.resolve(false);
+      var fi = editHost.querySelector('[data-mock=id]'); if (fi) fi.value = id || 'admin';
+      var fp = editHost.querySelector('[data-mock=pw]'); if (fp) fp.value = pw || 'x';
+      var fc = editHost.querySelector('[data-mock=captcha]'); if (fc) fc.value = cap || '1234';
+      return doLogin();
+    },
+    logout: doLogout,
+    chooseAdmin: function () { state.adminChosen = true; go("sysinfo"); return "ok"; },
+    goAdmin: function () { state.adminChosen = true; go("sysinfo"); return "ok"; },
+    setOptions: function (o) {
+      Object.keys(o || {}).forEach(function (k) { state.options[k] = o[k]; });
+      if (state.options.semanticsBroken) state.semantics = false;
+      saveOptions();
+      render();
+      return JSON.stringify(state.options);
+    },
+    getState: function () {
+      return JSON.stringify({ view: state.view, path: location.pathname, adminChosen: state.adminChosen, semantics: state.semantics, options: state.options,
+        listCount: state.list.length, dialog: !!state.dialog, snack: state.snack, confirmPath: state.confirmPath || '', confirmAnswer: state.confirmAnswer,
+        logoutCount: state.logoutCount, confirmCount: state.confirmCount, cancelCount: state.cancelCount,
+        listStale: state.listStale, signalAborts: state.signalAborts, signalOk: state.signalOk, taps: state.taps.slice(-8) });
+    },
+    resetConfirmPath: function () { state.confirmPath = ''; state.confirmAnswer = undefined; return 'ok'; },
+    confirmDialog: confirmDialog,
+    cancelDialog: cancelDialog,
+    reload: loadList,
+    burst: function (method, n) {
+      var ok = 0, i = 0;
+      function next() {
+        if (i++ >= n) return Promise.resolve(ok);
+        return api(method).then(function (j) { if (j && j.result) ok++; return next(); }, function () { return next(); });
+      }
+      return next();
+    }
+  };
+
+  setTimeout(function () {
+    var l = document.getElementById('loader'); if (l) l.remove();
+    route();
+  }, 300);
+})();
+</script>
+</body>
+</html>

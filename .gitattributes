@@ -1,0 +1,5 @@
+# 저장소에는 LF로 두고, 체크아웃할 때 각 PC 설정에 맞춘다.
+* text=auto
+
+*.ico binary
+*.png binary
