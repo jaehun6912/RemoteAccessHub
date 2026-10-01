@@ -55,10 +55,25 @@ public sealed class SettingsForm : Form
     /// <summary>[초기화]를 확인했으면 true. 창을 닫은 뒤 메인 창이 초기화와 시작 설정을 진행한다.</summary>
     public bool ResetRequested { get; private set; }
 
+    private Panel? _scroller;
+
+    /// <summary>자체검사용: 설정 목록을 세로로 스크롤한다(0.0 = 맨 위, 1.0 = 맨 아래).</summary>
+    internal void ScrollTo(double fraction)
+    {
+        if (_scroller == null) return;
+        _scroller.PerformLayout();
+        var range = Math.Max(0, _scroller.DisplayRectangle.Height - _scroller.ClientSize.Height);
+        _scroller.AutoScrollPosition = new Point(0, (int)(range * Math.Clamp(fraction, 0, 1)));
+        _scroller.PerformLayout();
+    }
+
     public SettingsForm(AppSettings current, IVpnService vpn)
     {
         _work = current.Clone();
         _vpn = vpn;
+        // 설정 창을 열 때마다 크롬 원격 데스크톱 앱 설치 여부를 다시 본다.
+        // 이미 찾아 둔 경우에는 다시 읽지 않는다(그 아이콘을 다른 화면이 쓰고 있다).
+        if (CrdAppFinder.Find() == null) CrdIcon.Reload();
 
         Text = "설정";
         AppIcon.ApplyTo(this);
@@ -72,6 +87,7 @@ public sealed class SettingsForm : Form
         ClientSize = new Size(L(760), L(780));
 
         var scroller = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(L(16), L(8), L(16), L(8)) };
+        _scroller = scroller;
 
         // Dock=Top은 나중에 추가한 것이 위로 오므로 아래 섹션부터 추가한다.
         var sections = new List<Control>
@@ -100,15 +116,13 @@ public sealed class SettingsForm : Form
                 Check(t, _useCrd);
                 Row(t, "기기 ID (선택)", _crdHostId, "remotedesktop.google.com/access에서 그 PC에 연결했을 때 주소의 session/ 뒤 부분. 주소 전체를 붙여 넣어도 됩니다. 비우면 기기 목록 화면을 엽니다.");
                 Row(t, "부팅 확인 방법", _crdCheck, "크롬 원격 데스크톱은 열어 둔 포트가 없어 PC가 켜졌는지 확인할 방법이 없습니다. 확인하려면 위의 일반 접속 또는 VPN 설정을 빌려 씁니다.");
-                var open = new FlatButton { Text = "기기 목록 열기", Variant = ButtonVariant.Secondary, Glyph = Theme.Glyph.Globe };
+                var open = new FlatButton { Text = "기기 목록 열기", Variant = ButtonVariant.Secondary, Glyph = Theme.Glyph.Remote, GlyphImage = CrdIcon.Current };
                 open.Size = new Size(Math.Max(L(140), open.PreferredWidth()), L(34));
                 open.Click += (_, _) => OpenCrdAccessPage();
                 t.Controls.Add(open, 1, t.RowCount);
                 t.RowCount++;
-                var crdNote = new Label { Text = "대상 PC에 크롬 원격 데스크톱 호스트가 설치되어 있어야 합니다. 구글 로그인과 PIN 입력은 브라우저에서 직접 하며, 프로그램은 저장하지 않습니다.", AutoSize = true, MaximumSize = new Size(L(660), 0), Margin = new Padding(0, L(6), 0, 0), Tag = "sub", Font = Theme.UiFont(8.5f) };
-                t.Controls.Add(crdNote, 0, t.RowCount);
-                t.SetColumnSpan(crdNote, 2);
-                t.RowCount++;
+                Note(t, CrdWhereText() + "\n대상 PC에 크롬 원격 데스크톱 호스트가 설치되어 있어야 합니다."
+                    + "\n구글 로그인과 PIN 입력은 직접 하며, 프로그램은 저장하지 않습니다.");
             }),
             Section("동작과 화면", t =>
             {
@@ -146,12 +160,9 @@ public sealed class SettingsForm : Form
                 t.Controls.Add(row, 0, t.RowCount);
                 t.SetColumnSpan(row, 2);
                 t.RowCount++;
-                var note = new Label { Text = "내보내기: 이 창의 설정을 JSON 파일로 저장합니다(비밀번호·보안문자는 원래 저장하지 않으므로 들어가지 않음). 공유기 주소·PC 이름이 들어 있으니 공유에 주의하세요.\n"
+                Note(t, "내보내기: 이 창의 설정을 JSON 파일로 저장합니다(비밀번호·보안문자는 원래 저장하지 않으므로 들어가지 않음). 공유기 주소·PC 이름이 들어 있으니 공유에 주의하세요.\n"
                     + "가져오기: 내보낸 파일의 값을 이 창에 채웁니다. [저장]을 눌러야 적용됩니다.\n"
-                    + "초기화: 모든 설정을 처음 상태로 되돌리고 시작 설정을 다시 엽니다. 기록 파일과 VPN 연결은 그대로입니다.", AutoSize = true, MaximumSize = new Size(L(660), 0), Margin = new Padding(0, L(6), 0, 0), Tag = "sub", Font = Theme.UiFont(8.5f) };
-                t.Controls.Add(note, 0, t.RowCount);
-                t.SetColumnSpan(note, 2);
-                t.RowCount++;
+                    + "초기화: 모든 설정을 처음 상태로 되돌리고 시작 설정을 다시 엽니다. 기록 파일과 VPN 연결은 그대로입니다.");
             }),
         };
         for (var i = 0; i < sections.Count; i++) sections[i].TabIndex = i; // 화면 위쪽부터 Tab 이동
@@ -227,6 +238,21 @@ public sealed class SettingsForm : Form
         table.RowCount = 1;
         build(table);
         card.Controls.Add(table);
+        // 칸이 많아지면 TableLayoutPanel의 PreferredSize가 마지막 줄들을 빼고 알려 줘서
+        // 카드가 짧아지고 끝줄이 잘린다. 실제 표 높이로 카드 높이를 맞춘다.
+        card.AutoSize = false;
+        void FitCard(object? sender, EventArgs e)
+        {
+            var h = table.Bottom + card.Padding.Bottom;
+            if (h <= 0 || card.Height == h) return;
+            card.Height = h;
+            // 카드 높이가 바뀌면 스크롤 범위도 다시 잡아야 끝부분까지 내려간다.
+            card.Parent?.PerformLayout();
+        }
+        table.SizeChanged += FitCard;
+        table.LocationChanged += FitCard;
+        card.HandleCreated += FitCard;
+        FitCard(null, EventArgs.Empty);
         return card;
     }
 
@@ -243,6 +269,22 @@ public sealed class SettingsForm : Form
             var h = new Label { Text = hint, AutoSize = true, Margin = new Padding(0, 0, 0, L(6)), Tag = "sub", Font = Theme.UiFont(8.5f) };
             t.Controls.Add(h, 1, t.RowCount);
             t.RowCount++;
+        }
+    }
+
+    /// <summary>
+    /// 구역 아래쪽 안내. 줄 힌트와 같은 자리(오른쪽 칸)에 한 줄씩 넣는다.
+    /// 이 창의 구역 카드는 접히는 안내의 높이를 제대로 반영하지 못하므로 각 줄은 한 줄에 들어갈 길이로 쓴다.
+    /// </summary>
+    private void Note(TableLayoutPanel t, string text)
+    {
+        var first = true;
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var l = new Label { Text = line.Trim(), AutoSize = true, Margin = new Padding(0, first ? L(6) : L(2), 0, L(2)), Tag = "sub", Font = Theme.UiFont(8.5f) };
+            t.Controls.Add(l, 1, t.RowCount);
+            t.RowCount++;
+            first = false;
         }
     }
 
@@ -364,7 +406,18 @@ public sealed class SettingsForm : Form
         Close();
     }
 
+    /// <summary>이 PC에서 앱으로 여는지 브라우저로 여는지 알려 주는 안내 문구.</summary>
+    private static string CrdWhereText()
+    {
+        var app = CrdAppFinder.Find();
+        // 한 줄에 들어가는 길이로 나눈다(여러 줄로 접히는 안내는 구역 카드에서 끝줄이 잘린다).
+        return app != null
+            ? $"이 PC에 '{app.DisplayName}' 앱이 설치되어 있어 앱 창으로 엽니다."
+            : "이 PC에는 앱이 설치되어 있지 않아 기본 브라우저로 엽니다.\n브라우저에서 [앱으로 설치]를 하면 다음부터 앱 창으로 열립니다.";
+    }
+
     private void OpenCrdAccessPage()
+
     {
         try
         {

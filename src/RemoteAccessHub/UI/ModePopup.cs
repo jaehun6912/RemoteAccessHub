@@ -256,10 +256,30 @@ public sealed class ModePopup : Form
             TextRenderer.DrawText(g, _number.ToString(), Theme.UiFont(8.5f, FontStyle.Bold), Rectangle.Round(badge), subColor,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
 
-            // 아이콘
-            var glyph = Option.Mode == ConnectMode.Vpn ? Theme.Glyph.Lock : Theme.Glyph.Globe;
-            TextRenderer.DrawText(g, glyph, Theme.IconFont(13f), new Rectangle((int)S(38), 0, (int)S(26), Height),
-                Option.Enabled ? p.Accent : p.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            // 아이콘: 크롬 원격 데스크톱은 설치된 앱의 실제 아이콘을 쓰고, 없으면 글리프로 그린다.
+            var iconRect = new Rectangle((int)S(38), 0, (int)S(26), Height);
+            var appIcon = Option.Mode == ConnectMode.Crd ? CrdIcon.Current : null;
+            if (appIcon != null)
+            {
+                var side = (int)S(20);
+                var box = new Rectangle(iconRect.X + (iconRect.Width - side) / 2, (Height - side) / 2, side, side);
+                var old = g.InterpolationMode;
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                if (Option.Enabled) g.DrawImage(appIcon, box);
+                else Drawing.DrawImageFaded(g, appIcon, box, 0.4f);
+                g.InterpolationMode = old;
+            }
+            else
+            {
+                var glyph = Option.Mode switch
+                {
+                    ConnectMode.Vpn => Theme.Glyph.Lock,
+                    ConnectMode.Crd => Theme.Glyph.Remote,
+                    _ => Theme.Glyph.Globe,
+                };
+                TextRenderer.DrawText(g, glyph, Theme.IconFont(13f), iconRect,
+                    Option.Enabled ? p.Accent : p.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            }
 
             var tx = (int)S(72);
             var tw = Width - tx - (int)S(10);

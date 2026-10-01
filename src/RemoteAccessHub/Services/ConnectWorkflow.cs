@@ -82,10 +82,16 @@ public sealed class ConnectWorkflow
                     responded = true;
                 }
                 progress?.Report(new(ConnectStage.LaunchingCrd, "크롬 원격 데스크톱을 여는 중..."));
-                _crd.Open(settings.CrdHostId);
+                var opened = _crd.Open(settings.CrdHostId);
                 var where = InputRules.NormalizeCrdHostId(settings.CrdHostId) == null ? "기기 목록" : "저장된 기기";
-                return new(ConnectStage.Done, true,
-                    $"크롬 원격 데스크톱을 열었습니다({where}). 브라우저에서 구글 로그인과 PIN 입력은 직접 하세요.",
+                var how = opened switch
+                {
+                    CrdOpenTarget.App => $"크롬 원격 데스크톱 앱을 열었습니다({where}).",
+                    // 앱은 열었지만 주소를 넘기지 못해 저장한 기기로 바로 가지 못한 경우.
+                    CrdOpenTarget.AppHome => "크롬 원격 데스크톱 앱을 열었습니다(기기 목록). 목록에서 기기를 고르세요.",
+                    _ => $"브라우저로 크롬 원격 데스크톱을 열었습니다({where}).",
+                };
+                return new(ConnectStage.Done, true, how + " 구글 로그인과 PIN 입력은 직접 하세요.",
                     sw.Elapsed, responded, mode);
             }
 

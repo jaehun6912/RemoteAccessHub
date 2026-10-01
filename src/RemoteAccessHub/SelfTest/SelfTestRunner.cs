@@ -825,6 +825,18 @@ internal sealed class SelfTestDriver
                 using var bmp = new Bitmap(sf.Width, sf.Height);
                 sf.DrawToBitmap(bmp, new Rectangle(0, 0, sf.Width, sf.Height));
                 bmp.Save(Path.Combine(_options.ScreenshotDirectory, "08-settings-dark.png"), System.Drawing.Imaging.ImageFormat.Png);
+                // 아래쪽(크롬 원격 데스크톱·설정 파일)도 한 장 남긴다.
+                sf.ScrollTo(0.62);
+                await Task.Delay(200);
+                using var bmp2 = new Bitmap(sf.Width, sf.Height);
+                sf.DrawToBitmap(bmp2, new Rectangle(0, 0, sf.Width, sf.Height));
+                bmp2.Save(Path.Combine(_options.ScreenshotDirectory, "08b-settings-crd.png"), System.Drawing.Imaging.ImageFormat.Png);
+                sf.ScrollTo(1);
+                await Task.Delay(200);
+                using var bmp3 = new Bitmap(sf.Width, sf.Height);
+                sf.DrawToBitmap(bmp3, new Rectangle(0, 0, sf.Width, sf.Height));
+                bmp3.Save(Path.Combine(_options.ScreenshotDirectory, "08c-settings-bottom.png"), System.Drawing.Imaging.ImageFormat.Png);
+                sf.ScrollTo(0);
             }
             sf.Close();
         }
@@ -1092,10 +1104,38 @@ internal sealed class SelfTestDriver
                 $"options={count} rows={rows} detail='{opt.Detail}' chose={chose} last={s.LastMode}");
             _form.CurrentModePopup?.Close();
             await Task.Delay(200);
+
+            // 6) 앱이 설치된 PC와 아닌 PC에서 안내가 다른지(가짜 실행기로 양쪽을 흉내 낸다)
+            _crd.Target = CrdOpenTarget.App;
+            var inApp = await _form.RunConnectAsync(ConnectMode.Crd);
+            _crd.Target = CrdOpenTarget.AppHome;
+            var appHome = await _form.RunConnectAsync(ConnectMode.Crd);
+            _crd.Target = CrdOpenTarget.Browser;
+            var inBrowser = await _form.RunConnectAsync(ConnectMode.Crd);
+            Check("크롬 원격 데스크톱: 앱으로 열었는지 브라우저로 열었는지 그대로 알림",
+                inApp.Message.Contains("앱을 열었습니다") && !inApp.Message.Contains("브라우저로")
+                    && appHome.Message.Contains("기기 목록") && !appHome.Message.Contains("저장된 기기")
+                    && inBrowser.Message.Contains("브라우저로"),
+                $"app='{inApp.Message}' appHome='{appHome.Message}' browser='{inBrowser.Message}'");
+
+            // 7) 이 PC의 실제 앱 찾기(설치 여부와 무관하게 예외 없이 끝나야 한다)
+            CrdInstalledApp? found = null;
+            string? findError = null;
+            try { found = CrdAppFinder.Refresh(); }
+            catch (Exception ex) { findError = ex.Message; }
+            var icon = found == null ? null : CrdIcon.Reload();
+            var appOk = findError == null && (found == null
+                || (found.Aumid.EndsWith("!App", StringComparison.Ordinal) && found.PackageFamilyName.Length > 0
+                    && (found.BrowserAppId == null || found.BrowserAppId.Length == 32)));
+            Check("크롬 원격 데스크톱: 설치된 앱 찾기(설치돼 있지 않아도 오류 없이 넘어감)", appOk,
+                findError != null ? "오류: " + findError
+                    : found == null ? "이 PC에는 앱 없음 → 기본 브라우저로 엽니다"
+                    : $"앱 찾음 · 주소 전달 {(found.CanOpenUrlInApp ? "가능" : "불가")} · 아이콘 {(icon != null ? "읽음" : "없음")}");
         }
         finally
         {
             // 뒤따르는 검사는 기존 두 가지 방식만 쓰므로 설정을 되돌린다.
+            _crd.Target = CrdOpenTarget.Browser;
             s.UseCrd = savedUse;
             s.CrdHostId = savedId;
             s.CrdBootCheckMode = savedCheck;

@@ -55,7 +55,14 @@ public sealed class FakeCrdLauncher : ICrdLauncher
     public List<string> Opened { get; } = new();
     public int OpenCount => Opened.Count;
 
-    public void Open(string? hostId) => Opened.Add(CrdLauncher.BuildUrl(hostId));
+    /// <summary>앱이 설치된 PC를 흉내 낼 때 바꾼다.</summary>
+    public CrdOpenTarget Target { get; set; } = CrdOpenTarget.Browser;
+
+    public CrdOpenTarget Open(string? hostId)
+    {
+        Opened.Add(CrdLauncher.BuildUrl(hostId));
+        return Target;
+    }
 }
 
 public sealed class FakeRdpLauncher : IRdpLauncher

@@ -134,6 +134,13 @@ public class CrdConnectWorkflowTests
 {
     private const string HostId = "7f3a1b9c2d4e5f60";
 
+    /// <summary>진행 보고를 그 자리에서 모은다. Progress&lt;T&gt;는 보고를 다른 스레드로 넘겨 검사 시점이 어긋난다.</summary>
+    private sealed class StageLog : IProgress<ConnectProgress>
+    {
+        public List<ConnectStage> Stages { get; } = new();
+        public void Report(ConnectProgress value) => Stages.Add(value.Stage);
+    }
+
     private static (ConnectWorkflow Wf, FakeVpnService Vpn, FakePortProbe Port, FakeRdpLauncher Rdp, FakeCrdLauncher Crd) Make()
     {
         var vpn = new FakeVpnService();
@@ -160,8 +167,9 @@ public class CrdConnectWorkflowTests
     public async Task Crd_without_boot_check_opens_browser_without_probing_or_vpn()
     {
         var (wf, vpn, port, rdp, crd) = Make();
-        var stages = new List<ConnectStage>();
-        var r = await wf.RunAsync(Settings(), ConnectMode.Crd, new Progress<ConnectProgress>(p => stages.Add(p.Stage)), CancellationToken.None);
+        var progress = new StageLog();
+        var r = await wf.RunAsync(Settings(), ConnectMode.Crd, progress, CancellationToken.None);
+        var stages = progress.Stages;
         Assert.True(r.Success, r.Message);
         Assert.Equal(ConnectStage.Done, r.Stage);
         Assert.Equal(ConnectMode.Crd, r.Mode);
@@ -247,6 +255,33 @@ public class CrdConnectWorkflowTests
         var r = await wf.RunAsync(s, ConnectMode.Crd, null, CancellationToken.None);
         Assert.Equal(ConnectStage.Failed, r.Stage);
         Assert.Empty(crd.Opened);
+    }
+
+    [Theory]
+    [InlineData(CrdOpenTarget.App, "앱을 열었습니다")]
+    [InlineData(CrdOpenTarget.AppHome, "앱을 열었습니다(기기 목록)")]
+    [InlineData(CrdOpenTarget.Browser, "브라우저로 크롬 원격 데스크톱을 열었습니다")]
+    public async Task Result_says_whether_the_app_or_the_browser_opened(CrdOpenTarget target, string expected)
+    {
+        var (wf, _, _, _, crd) = Make();
+        crd.Target = target;
+        var r = await wf.RunAsync(Settings(), ConnectMode.Crd, null, CancellationToken.None);
+        Assert.True(r.Success, r.Message);
+        Assert.Contains(expected, r.Message);
+        // 어느 쪽이든 로그인·PIN은 사용자가 직접 입력한다고 알린다.
+        Assert.Contains("직접 하세요", r.Message);
+    }
+
+    [Fact]
+    public async Task App_home_fallback_does_not_claim_the_saved_device_opened()
+    {
+        var (wf, _, _, _, crd) = Make();
+        crd.Target = CrdOpenTarget.AppHome;
+        var r = await wf.RunAsync(Settings(), ConnectMode.Crd, null, CancellationToken.None);
+        // 기기 ID를 저장해 두었어도 앱 첫 화면만 열렸으면 "저장된 기기"라고 하지 않는다.
+        Assert.DoesNotContain("저장된 기기", r.Message);
+        Assert.Contains("목록에서 기기를 고르세요", r.Message);
+        Assert.Equal($"{CrdLauncher.AccessUrl}/session/{HostId}", crd.Opened[0]);
     }
 
     [Fact]

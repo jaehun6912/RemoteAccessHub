@@ -192,6 +192,8 @@ public static class Theme
         public const string Sync = "";
         public const string Globe = "";
         public const string Lock = "";
+        /// <summary>원격 접속(모니터) 아이콘. 크롬 원격 데스크톱 앱이 없을 때 쓴다.</summary>
+        public const string Remote = "\uE8AF";
         public const string Document = "";
         public const string Folder = "";
         public const string Refresh = "";

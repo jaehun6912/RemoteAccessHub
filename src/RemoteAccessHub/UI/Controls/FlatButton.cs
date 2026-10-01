@@ -20,6 +20,7 @@ public sealed class FlatButton : Button
     private bool _pressed;
     private ButtonVariant _variant = ButtonVariant.Secondary;
     private string _glyph = "";
+    private Image? _glyphImage;
     private int _splitWidth;
 
     public event EventHandler? DropDownClick;
@@ -30,6 +31,10 @@ public sealed class FlatButton : Button
     /// <summary>왼쪽 아이콘 글리프(Theme.Glyph).</summary>
     [DefaultValue("")]
     public string Glyph { get => _glyph; set { _glyph = value ?? ""; Invalidate(); } }
+
+    /// <summary>글리프 대신 쓸 그림 아이콘(없으면 글리프). 그림은 버튼이 소유하지 않는다.</summary>
+    [DefaultValue(null)]
+    public Image? GlyphImage { get => _glyphImage; set { _glyphImage = value; Invalidate(); } }
 
     /// <summary>오른쪽 드롭다운 영역 너비(논리 px). 0이면 일반 버튼.</summary>
     [DefaultValue(0)]
@@ -161,11 +166,17 @@ public sealed class FlatButton : Button
             var label = Text + (ShowArrow ? "" : "");
             var iconFont = Theme.IconFont(10.5f);
             var textSize = Drawing.MeasureText(label, Font);
-            var iconW = _glyph.Length > 0 ? (int)Drawing.Scale(this, 22) : 0;
+            var iconW = _glyph.Length > 0 || _glyphImage != null ? (int)Drawing.Scale(this, 22) : 0;
             var arrowW = ShowArrow ? (int)Drawing.Scale(this, 18) : 0;
             var total = iconW + textSize.Width + arrowW;
             var x = content.X + Math.Max((int)Drawing.Scale(this, 10), (content.Width - total) / 2);
-            if (iconW > 0)
+            if (iconW > 0 && _glyphImage != null)
+            {
+                var side = (int)Drawing.Scale(this, 16);
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.DrawImage(_glyphImage, new Rectangle(x, (Height - side) / 2, side, side));
+            }
+            else if (iconW > 0)
                 TextRenderer.DrawText(g, _glyph, iconFont, new Rectangle(x, 0, iconW, Height), text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
             TextRenderer.DrawText(g, label, Font, new Rectangle(x + iconW, 0, Math.Max(0, content.Right - x - iconW - arrowW), Height), text,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
@@ -188,7 +199,7 @@ public sealed class FlatButton : Button
     {
         if (IconOnly) return (int)Drawing.Scale(this, 38);
         var w = Drawing.MeasureText(Text, Font).Width + (int)Drawing.Scale(this, 28);
-        if (_glyph.Length > 0) w += (int)Drawing.Scale(this, 22);
+        if (_glyph.Length > 0 || _glyphImage != null) w += (int)Drawing.Scale(this, 22);
         if (ShowArrow) w += (int)Drawing.Scale(this, 20);
         w += SplitPx;
         return w;

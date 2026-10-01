@@ -28,6 +28,15 @@ internal static class Drawing
     public static Size MeasureText(string text, Font font) =>
         TextRenderer.MeasureText(text, font, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
 
+    /// <summary>비활성 항목의 아이콘처럼 흐리게 그린다.</summary>
+    public static void DrawImageFaded(Graphics g, Image image, Rectangle box, float opacity)
+    {
+        using var attrs = new System.Drawing.Imaging.ImageAttributes();
+        var matrix = new System.Drawing.Imaging.ColorMatrix { Matrix33 = Math.Clamp(opacity, 0f, 1f) };
+        attrs.SetColorMatrix(matrix);
+        g.DrawImage(image, box, 0, 0, image.Width, image.Height, GraphicsUnit.Pixel, attrs);
+    }
+
     /// <summary>부모 배경색(투명 모서리 채우기용).</summary>
     public static Color ParentBack(Control c)
     {
