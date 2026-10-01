@@ -29,6 +29,7 @@ public sealed class MainForm : Form
     private readonly IVpnService _vpn;
     private readonly IPortProbe _portProbe;
     private readonly IRdpLauncher _rdp;
+    private readonly ICrdLauncher _crd;
 
     private readonly WebView2 _webView = new();
     private readonly Panel _browserHost = new();
@@ -122,7 +123,7 @@ public sealed class MainForm : Form
     public Task<bool> Initialized => _initTcs.Task;
     public NavResult? LastSettle { get; private set; }
 
-    public MainForm(LaunchOptions options, AppLog log, IVpnService? vpn = null, IPortProbe? probe = null, IRdpLauncher? rdp = null)
+    public MainForm(LaunchOptions options, AppLog log, IVpnService? vpn = null, IPortProbe? probe = null, IRdpLauncher? rdp = null, ICrdLauncher? crd = null)
     {
         _options = options;
         _log = log;
@@ -138,10 +139,11 @@ public sealed class MainForm : Form
         _vpn = vpn ?? new VpnService(log);
         _portProbe = probe ?? new TcpPortProbe();
         _rdp = rdp ?? new RdpLauncher(log);
+        _crd = crd ?? new CrdLauncher(log);
 
         _browser = new RouterBrowser(_webView, log, () => _settings);
         _wol = new WolAutomation(_browser, log, () => _settings);
-        _connect = new ConnectWorkflow(_vpn, _portProbe, _rdp, log);
+        _connect = new ConnectWorkflow(_vpn, _portProbe, _rdp, _crd, log);
 
         _cursorGuard = new CursorGuard(this, _browserHost, log);
         Application.AddMessageFilter(_cursorGuard);
@@ -436,7 +438,7 @@ public sealed class MainForm : Form
         var popup = new ModePopup(heading, ModeOptions.For(_settings), _settings.LastMode);
         popup.Chosen += mode =>
         {
-            _settings.LastConnectMode = mode == ConnectMode.Vpn ? "vpn" : "direct";
+            _settings.LastConnectMode = mode switch { ConnectMode.Vpn => "vpn", ConnectMode.Crd => "crd", _ => "direct" };
             if (!_options.SelfTest) TrySaveSettings();
             if (wakeFirst) _ = RunWakeAndConnectAsync(mode);
             else _ = RunConnectAsync(mode);
@@ -451,6 +453,9 @@ public sealed class MainForm : Form
 
     /// <summary>접속 방식 선택지 상태(자체검사에서도 사용).</summary>
     public ModeOption ModeOptionState(ConnectMode mode) => ModeOptions.Build(_settings, mode);
+
+    /// <summary>지금 설정에서 보이는 접속 방식 수(자체검사에서도 사용).</summary>
+    public int ModeOptionCount => ModeOptions.For(_settings).Count;
 
     private void HookEvents()
     {

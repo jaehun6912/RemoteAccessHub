@@ -21,13 +21,14 @@ public static class SelfTestRunner
         var vpn = new FakeVpnService();
         var port = new FakePortProbe();
         var rdp = new FakeRdpLauncher();
-        var form = new MainForm(options, log, vpn, port, rdp);
+        var crd = new FakeCrdLauncher();
+        var form = new MainForm(options, log, vpn, port, rdp, crd);
         form.Shown += async (_, _) =>
         {
             await Task.Yield();
             try
             {
-                await new SelfTestDriver(form, log, results, options, vpn, port, rdp).RunAsync();
+                await new SelfTestDriver(form, log, results, options, vpn, port, rdp, crd).RunAsync();
             }
             catch (Exception ex)
             {
@@ -72,6 +73,7 @@ internal sealed class SelfTestDriver
     private readonly FakeVpnService _vpn;
     private readonly FakePortProbe _port;
     private readonly FakeRdpLauncher _rdp;
+    private readonly FakeCrdLauncher _crd;
     private readonly CancellationToken _ct = CancellationToken.None;
 
     private const string TargetName = MockRouterServer.DefaultTargetName;
@@ -79,7 +81,7 @@ internal sealed class SelfTestDriver
     private const string MacB = "00:11:22:33:44:02";
     private const string MacC = "00:11:22:33:44:03";
 
-    public SelfTestDriver(MainForm form, AppLog log, List<TestResult> results, LaunchOptions options, FakeVpnService vpn, FakePortProbe port, FakeRdpLauncher rdp)
+    public SelfTestDriver(MainForm form, AppLog log, List<TestResult> results, LaunchOptions options, FakeVpnService vpn, FakePortProbe port, FakeRdpLauncher rdp, FakeCrdLauncher crd)
     {
         _form = form;
         _log = log;
@@ -88,6 +90,7 @@ internal sealed class SelfTestDriver
         _vpn = vpn;
         _port = port;
         _rdp = rdp;
+        _crd = crd;
     }
 
     private void Check(string name, bool pass, string detail)
@@ -572,6 +575,9 @@ internal sealed class SelfTestDriver
         // ================= J. PC 접속 흐름(가짜 VPN/포트/RDP) =================
         await ConnectScenariosAsync(s);
 
+        // ================= J-2. 크롬 원격 데스크톱 =================
+        await CrdScenariosAsync(s);
+
         // ================= L. 화면(UI) =================
         await UiScenariosAsync(mock, s);
 
@@ -989,6 +995,114 @@ internal sealed class SelfTestDriver
     private static string Masked(IEnumerable<string> macs) => string.Join(",", macs.Select(InputRules.MaskMac));
 
     private static string Short(string s) => s.Length > 260 ? s[..260] + "…" : s;
+
+    /// <summary>크롬 원격 데스크톱: 구글 중계이므로 열어 둔 포트가 없다. 확인하지 않은 것을 확인한 척하지 않는지도 함께 본다.</summary>
+    private async Task CrdScenariosAsync(AppSettings s)
+    {
+        const string HostId = "7f3a1b9c2d4e5f60";
+        var sessionUrl = CrdLauncher.AccessUrl + "/session/" + HostId;
+        var savedUse = s.UseCrd;
+        var savedId = s.CrdHostId;
+        var savedCheck = s.CrdBootCheckMode;
+        var savedMode = s.LastConnectMode;
+        try
+        {
+            // 1) 설정에서 꺼져 있으면 선택지에 없고 실행도 안 됨
+            s.UseCrd = false;
+            var off = _form.ModeOptionState(ConnectMode.Crd);
+            var offCount = _form.ModeOptionCount;
+            var openedBefore = _crd.OpenCount;
+            var refused = await _form.RunConnectAsync(ConnectMode.Crd);
+            Check("크롬 원격 데스크톱: 꺼져 있으면 선택지에 없고 브라우저도 열지 않음",
+                offCount == 2 && !off.Enabled && !refused.Success && _crd.OpenCount == openedBefore,
+                $"options={offCount} enabled={off.Enabled} stage={refused.Stage} opened+{_crd.OpenCount - openedBefore}");
+
+            // 2) 켜고 부팅 확인 없음: 포트를 보지 않고 저장된 기기 주소를 연다
+            s.UseCrd = true;
+            s.CrdHostId = HostId;
+            s.CrdBootCheckMode = "none";
+            _port.NeverOpen = true; // 포트를 본다면 실패할 상황 — 보지 않아야 성공한다
+            var attempts = _port.Attempts;
+            var vpnCalls = _vpn.ConnectCalls;
+            var rdpLaunches = _rdp.LaunchCount;
+            openedBefore = _crd.OpenCount;
+            var a = await _form.RunConnectAsync(ConnectMode.Crd);
+            var f = _form.Flow;
+            Check("크롬 원격 데스크톱: 부팅 확인 없이 저장된 기기 주소를 연다(포트·VPN·mstsc 사용 없음)",
+                a.Success && _crd.OpenCount == openedBefore + 1 && _crd.Opened[^1] == sessionUrl
+                    && _port.Attempts == attempts && _vpn.ConnectCalls == vpnCalls && _rdp.LaunchCount == rdpLaunches,
+                $"stage={a.Stage} url={_crd.Opened[^1]} ports+{_port.Attempts - attempts} vpn+{_vpn.ConnectCalls - vpnCalls} mstsc+{_rdp.LaunchCount - rdpLaunches}");
+            Check("크롬 원격 데스크톱: 확인하지 않은 부팅 단계를 완료로 표시하지 않음",
+                !a.PcRespondedOnPort && f.Boot.State == UI.StepState.Pending && f.Boot.Detail == "확인 안 함"
+                    && _form.WolBootText == "PC 부팅: 확인 안 함" && f.Remote.State == UI.StepState.Done,
+                $"boot={f.Boot} remote={f.Remote} wolBoot='{_form.WolBootText}'");
+
+            // 3) 기기 ID가 없으면 기기 목록 화면
+            s.CrdHostId = "";
+            openedBefore = _crd.OpenCount;
+            var b = await _form.RunConnectAsync(ConnectMode.Crd);
+            Check("크롬 원격 데스크톱: 기기 ID가 없으면 기기 목록 화면을 연다",
+                b.Success && _crd.OpenCount == openedBefore + 1 && _crd.Opened[^1] == CrdLauncher.AccessUrl,
+                $"stage={b.Stage} url={_crd.Opened[^1]}");
+
+            // 4) 부팅 확인을 켜면 포트가 응답할 때까지 기다리고, 응답이 없으면 브라우저를 열지 않는다
+            s.CrdHostId = HostId;
+            s.CrdBootCheckMode = "direct";
+            s.BootWaitSeconds = 10;
+            _port.NeverOpen = true;
+            openedBefore = _crd.OpenCount;
+            var c = await _form.RunConnectAsync(ConnectMode.Crd);
+            Check("크롬 원격 데스크톱: 부팅 확인 실패 시 브라우저를 열지 않음",
+                !c.Success && c.Stage == ConnectStage.TimedOut && _crd.OpenCount == openedBefore,
+                $"stage={c.Stage} opened+{_crd.OpenCount - openedBefore}");
+
+            _port.NeverOpen = false;
+            _port.OpenAfterAttempts = _port.Attempts + 2;
+            attempts = _port.Attempts;
+            openedBefore = _crd.OpenCount;
+            var d = await _form.RunConnectAsync(ConnectMode.Crd);
+            Check("크롬 원격 데스크톱: 부팅 확인 후 브라우저를 연다",
+                d.Success && d.PcRespondedOnPort && _port.Attempts > attempts && _crd.OpenCount == openedBefore + 1 && _form.Flow.Boot.State == UI.StepState.Done,
+                $"stage={d.Stage} ports+{_port.Attempts - attempts} boot={_form.Flow.Boot}");
+
+            // 5) 접속 방식 팝업에 세 번째 선택지가 생기고, 골라서 바로 열 수 있다
+            s.CrdBootCheckMode = "none";
+            var count = _form.ModeOptionCount;
+            var opt = _form.ModeOptionState(ConnectMode.Crd);
+            openedBefore = _crd.OpenCount;
+            var popup = _form.ShowModePopup(wakeFirst: false);
+            await Task.Delay(300);
+            if (!string.IsNullOrEmpty(_options.ScreenshotDirectory) && popup != null)
+            {
+                try
+                {
+                    Directory.CreateDirectory(_options.ScreenshotDirectory);
+                    using var bmp = new Bitmap(popup.Width, popup.Height);
+                    popup.DrawToBitmap(bmp, new Rectangle(0, 0, popup.Width, popup.Height));
+                    bmp.Save(Path.Combine(_options.ScreenshotDirectory, "09b-mode-popup-crd.png"), System.Drawing.Imaging.ImageFormat.Png);
+                }
+                catch { /* ignore */ }
+            }
+            var rows = popup?.OptionCount ?? 0;
+            var chose = popup != null && popup.Choose(ConnectMode.Crd);
+            await WaitUntilAsync(() => _crd.OpenCount > openedBefore && !_form.IsBusy, TimeSpan.FromSeconds(15));
+            Check("UI: 접속 방식 팝업에 크롬 원격 데스크톱 선택지 추가(골라서 바로 열기)",
+                count == 3 && rows == 3 && opt.Enabled && opt.Title == "크롬 원격 데스크톱" && chose
+                    && _crd.OpenCount == openedBefore + 1 && s.LastMode == ConnectMode.Crd,
+                $"options={count} rows={rows} detail='{opt.Detail}' chose={chose} last={s.LastMode}");
+            _form.CurrentModePopup?.Close();
+            await Task.Delay(200);
+        }
+        finally
+        {
+            // 뒤따르는 검사는 기존 두 가지 방식만 쓰므로 설정을 되돌린다.
+            s.UseCrd = savedUse;
+            s.CrdHostId = savedId;
+            s.CrdBootCheckMode = savedCheck;
+            s.LastConnectMode = savedMode;
+            _port.NeverOpen = false;
+        }
+    }
 
     private async Task ConnectScenariosAsync(AppSettings s)
     {

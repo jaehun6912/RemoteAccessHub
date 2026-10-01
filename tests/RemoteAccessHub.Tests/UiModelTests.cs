@@ -264,3 +264,79 @@ public class ActionGateTests
         Assert.Equal(StepState.Done, f.Login.State); // 로그아웃하면 준비 표시가 지워짐
     }
 }
+
+public class CrdUiModelTests
+{
+    private static readonly DateTimeOffset T = new(2026, 10, 2, 21, 5, 0, TimeSpan.FromHours(9));
+
+    private static AppSettings Settings() => new()
+    {
+        PublicHost = "myhome.iptime.org", PublicRdpPort = 41000,
+        VpnName = "HomeVPN", VpnDesktopIp = "192.168.0.10", VpnRdpPort = 3389,
+        UseCrd = true, CrdHostId = "7f3a1b9c2d4e5f60", CrdBootCheckMode = "none",
+    };
+
+    [Fact]
+    public void Crd_option_appears_only_when_turned_on()
+    {
+        var off = Settings();
+        off.UseCrd = false;
+        Assert.Equal(2, ModeOptions.For(off).Count);
+
+        var on = ModeOptions.For(Settings());
+        Assert.Equal(3, on.Count);
+        Assert.Equal(ConnectMode.Crd, on[2].Mode);
+        Assert.True(on[2].Enabled);
+        Assert.Equal("크롬 원격 데스크톱", on[2].Title);
+        // 기존 두 방식의 순서와 내용은 그대로다.
+        Assert.Equal(ConnectMode.Direct, on[0].Mode);
+        Assert.Equal(ConnectMode.Vpn, on[1].Mode);
+    }
+
+    [Fact]
+    public void Crd_option_detail_says_what_will_happen()
+    {
+        var s = Settings();
+        Assert.Equal("저장된 기기로 바로 연결 · 부팅 확인 없음", ModeOptions.Build(s, ConnectMode.Crd).Detail);
+        s.CrdHostId = "";
+        Assert.Equal("브라우저에서 기기 고르기 · 부팅 확인 없음", ModeOptions.Build(s, ConnectMode.Crd).Detail);
+        s.CrdBootCheckMode = "direct";
+        Assert.Contains("부팅 확인: 일반 접속 주소", ModeOptions.Build(s, ConnectMode.Crd).Detail);
+        s.CrdBootCheckMode = "vpn";
+        Assert.Contains("부팅 확인: VPN", ModeOptions.Build(s, ConnectMode.Crd).Detail);
+    }
+
+    [Fact]
+    public void Crd_without_boot_check_does_not_claim_the_pc_was_checked()
+    {
+        var f = new FlowTracker();
+        f.OnConnectStarted(ConnectMode.Crd, 180);
+        Assert.Equal(StepState.Active, f.Boot.State);
+        f.OnConnectProgress(new ConnectProgress(ConnectStage.BootCheckSkipped, "확인 없이 엽니다"), T);
+        Assert.Equal(StepState.Pending, f.Boot.State);
+        Assert.Equal("확인 안 함", f.Boot.Detail);
+        Assert.Equal("PC 부팅: 확인 안 함", f.WolBootText);
+        Assert.False(f.Tick(T.AddSeconds(30)));
+
+        f.OnConnectProgress(new ConnectProgress(ConnectStage.LaunchingCrd, "여는 중"), T);
+        Assert.Equal(StepState.Active, f.Remote.State);
+        f.OnConnectOutcome(new ConnectOutcome(ConnectStage.Done, true, "열었습니다", TimeSpan.FromSeconds(1), false, ConnectMode.Crd), T);
+        Assert.Equal(StepState.Done, f.Remote.State);
+        Assert.Contains("크롬 원격 데스크톱 열림", f.Remote.Detail);
+        // 확인하지 않은 단계는 완료로 바꾸지 않는다.
+        Assert.Equal(StepState.Pending, f.Boot.State);
+    }
+
+    [Fact]
+    public void Crd_with_boot_check_marks_the_boot_step_done()
+    {
+        var f = new FlowTracker();
+        f.OnConnectStarted(ConnectMode.Crd, 180);
+        f.OnConnectProgress(new ConnectProgress(ConnectStage.WaitingPort, "대기"), T);
+        f.OnConnectProgress(new ConnectProgress(ConnectStage.PortOpen, "열림"), T.AddSeconds(20));
+        Assert.Equal(StepState.Done, f.Boot.State);
+        f.OnConnectOutcome(new ConnectOutcome(ConnectStage.Done, true, "열었습니다", TimeSpan.FromSeconds(21), true, ConnectMode.Crd), T.AddSeconds(21));
+        Assert.Equal(StepState.Done, f.Boot.State);
+        Assert.Equal(StepState.Done, f.Remote.State);
+    }
+}

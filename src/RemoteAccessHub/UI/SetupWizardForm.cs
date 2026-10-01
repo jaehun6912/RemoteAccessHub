@@ -44,9 +44,12 @@ public sealed class SetupWizardForm : Form
     internal readonly ComboBox VpnNameBox = new() { DropDownStyle = ComboBoxStyle.DropDown };
     internal readonly TextBox VpnIpBox = new() { PlaceholderText = "예: 192.168.0.10" };
     internal readonly NumericUpDown VpnPortBox = new() { Minimum = 1, Maximum = 65535, Value = 3389 };
+    internal readonly CheckBox UseCrdBox = new() { Text = "크롬 원격 데스크톱 — 구글 계정으로 연결(포트포워딩·VPN 불필요)" };
+    internal readonly TextBox CrdHostIdBox = new() { PlaceholderText = "선택 · 기기 ID 또는 세션 주소 전체" };
     private readonly TableLayoutPanel _summary = new() { ColumnCount = 2, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Top };
     private readonly List<Control> _directFields = new();
     private readonly List<Control> _vpnFields = new();
+    private readonly List<Control> _crdFields = new();
 
     public Page CurrentPage { get; private set; }
     public string ErrorText => _error.Visible ? _error.Text : "";
@@ -67,7 +70,10 @@ public sealed class SetupWizardForm : Form
         ShowInTaskbar = false;
         AutoScaleMode = AutoScaleMode.None;
         Font = Theme.UiFont(9.5f);
-        ClientSize = new Size(L(720), L(600));
+        // 접속 방법 단계가 세 가지(일반·VPN·크롬 원격 데스크톱)로 늘어 세로를 조금 키웠다.
+        // 작은 화면에서 창이 작업 영역을 넘지 않도록 줄인다(넘치는 내용은 각 단계가 스크롤한다).
+        var work = Screen.PrimaryScreen?.WorkingArea.Height ?? L(680);
+        ClientSize = new Size(L(720), Math.Max(L(520), Math.Min(L(680), work - L(60))));
 
         // --- 머리: 단계 이름 · 제목 · 설명
         var header = new Panel { Dock = DockStyle.Top, Height = L(112) };
@@ -94,10 +100,12 @@ public sealed class SetupWizardForm : Form
         RouterUrlBox.TextChanged += (_, _) => { UpdateCertOption(); _checkResult.Text = ""; };
         UseDirectBox.CheckedChanged += (_, _) => UpdateConnectFields();
         UseVpnBox.CheckedChanged += (_, _) => UpdateConnectFields();
+        UseCrdBox.CheckedChanged += (_, _) => UpdateConnectFields();
         // 입력을 고치면 앞서 띄운 오류 문구는 지운다(다음을 누를 때 다시 검사).
         foreach (var tb in new Control[] { RouterUrlBox, PcNameBox, PcMacBox, PublicHostBox, VpnNameBox, VpnIpBox }) tb.TextChanged += (_, _) => SetError(null);
         foreach (var nud in new[] { PublicPortBox, VpnPortBox }) nud.ValueChanged += (_, _) => SetError(null);
-        foreach (var cb in new[] { UseDirectBox, UseVpnBox, AllowCertBox }) cb.CheckedChanged += (_, _) => SetError(null);
+        foreach (var cb in new[] { UseDirectBox, UseVpnBox, UseCrdBox, AllowCertBox }) cb.CheckedChanged += (_, _) => SetError(null);
+        CrdHostIdBox.TextChanged += (_, _) => SetError(null);
 
         BuildPages();
 
@@ -136,7 +144,7 @@ public sealed class SetupWizardForm : Form
             Heading(t, "이 프로그램이 하는 일");
             Para(t, "① 프로그램 안에 ipTIME 공유기 관리자 화면을 열고, 로그인은 직접 합니다.\n② 공유기의 WOL 기능으로 집 PC를 켭니다.\n③ PC가 켜질 때까지 기다렸다가 원격 데스크톱으로 연결합니다.");
             Heading(t, "준비할 것");
-            Para(t, "• 집 밖에서 열 수 있는 공유기 관리자 주소 (DDNS 주소와 원격 관리 포트)\n• 공유기 [특수 기능 → WOL 기능]에 등록한 PC 이름\n• 원격 데스크톱 연결 방법: 공유기 포트포워딩(일반 접속) 또는 Windows VPN 연결");
+            Para(t, "• 집 밖에서 열 수 있는 공유기 관리자 주소 (DDNS 주소와 원격 관리 포트)\n• 공유기 [특수 기능 → WOL 기능]에 등록한 PC 이름\n• 접속 방법: 공유기 포트포워딩(일반 접속), Windows VPN 연결, 또는 크롬 원격 데스크톱");
             Heading(t, "저장하지 않는 것");
             Para(t, "공유기 아이디·비밀번호·보안문자는 입력받지도, 저장하지도 않습니다. 모든 값은 나중에 ⚙ 설정에서 바꿀 수 있습니다.");
         });
@@ -172,7 +180,10 @@ public sealed class SetupWizardForm : Form
             _vpnFields.AddRange(Row(t, "Windows VPN 연결", VpnNameBox, "Windows 설정 > 네트워크 > VPN에 만든 연결 (목록에서 고르기)"));
             _vpnFields.AddRange(Row(t, "집 PC 내부 IP", VpnIpBox, "VPN 연결 뒤 접속할 집 PC의 IP"));
             _vpnFields.AddRange(Row(t, "내부 포트", VpnPortBox));
-            Para(t, "\n둘 다 끄면 [PC 켜기]만 쓸 수 있고, 접속 방법은 나중에 ⚙ 설정에서 넣을 수 있습니다.", sub: true);
+            CheckRow(t, UseCrdBox, top: true);
+            _crdFields.AddRange(Row(t, "기기 ID (선택)", CrdHostIdBox, "모르면 비워 두세요(연결할 때 기기 목록을 엽니다). 세션 주소 전체를 붙여 넣어도 됩니다."));
+            Para(t, "\n크롬 원격 데스크톱은 대상 PC에 호스트가 설치돼 있어야 하고, 구글 로그인과 PIN 입력은 브라우저에서 직접 합니다. 열어 둔 포트가 없어 PC가 켜졌는지는 확인하지 않습니다(⚙ 설정에서 바꿀 수 있음).", sub: true);
+            Para(t, "모두 끄면 [PC 켜기]만 쓸 수 있고, 접속 방법은 나중에 ⚙ 설정에서 넣을 수 있습니다.", sub: true);
         });
 
         _pages[(int)Page.Done] = PageOf(t =>
@@ -276,6 +287,8 @@ public sealed class SetupWizardForm : Form
         VpnPortBox.Value = Math.Clamp(_work.VpnRdpPort, 1, 65535);
         UseDirectBox.Checked = _work.PublicHost.Length > 0;
         UseVpnBox.Checked = _work.VpnName.Length > 0;
+        UseCrdBox.Checked = _work.UseCrd;
+        CrdHostIdBox.Text = _work.CrdHostId;
         UpdateCertOption();
         UpdateConnectFields();
     }
@@ -291,6 +304,7 @@ public sealed class SetupWizardForm : Form
     {
         foreach (var c in _directFields) c.Enabled = UseDirectBox.Checked;
         foreach (var c in _vpnFields) c.Enabled = UseVpnBox.Checked;
+        foreach (var c in _crdFields) c.Enabled = UseCrdBox.Checked;
     }
 
     private string? Validate(Page page)
@@ -313,6 +327,8 @@ public sealed class SetupWizardForm : Form
                     return "Windows VPN 연결 이름을 목록에서 고르거나 입력하세요.";
                 if (UseVpnBox.Checked && !InputRules.IsValidHost(VpnIpBox.Text.Trim()))
                     return "VPN 연결 뒤 접속할 집 PC의 내부 IP를 확인하세요. 예: 192.168.0.10";
+                if (UseCrdBox.Checked && CrdHostIdBox.Text.Trim().Length > 0 && InputRules.NormalizeCrdHostId(CrdHostIdBox.Text) == null)
+                    return "크롬 원격 데스크톱 기기 ID 형식이 올바르지 않습니다. 모르면 비워 두세요(연결할 때 기기 목록을 엽니다).";
                 return null;
             default:
                 return null;
@@ -337,7 +353,9 @@ public sealed class SetupWizardForm : Form
                 _work.VpnName = UseVpnBox.Checked ? VpnNameBox.Text.Trim() : "";
                 _work.VpnDesktopIp = UseVpnBox.Checked ? VpnIpBox.Text.Trim() : "";
                 _work.VpnRdpPort = (int)VpnPortBox.Value;
-                _work.LastConnectMode = !UseDirectBox.Checked && UseVpnBox.Checked ? "vpn" : "direct";
+                _work.UseCrd = UseCrdBox.Checked;
+                _work.CrdHostId = UseCrdBox.Checked ? InputRules.NormalizeCrdHostId(CrdHostIdBox.Text) ?? "" : "";
+                _work.LastConnectMode = UseDirectBox.Checked ? "direct" : UseVpnBox.Checked ? "vpn" : UseCrdBox.Checked ? "crd" : "direct";
                 break;
         }
     }
@@ -380,7 +398,7 @@ public sealed class SetupWizardForm : Form
             Page.Welcome => ("RemoteAccessHub 시작 설정", "처음 한 번만 필요한 정보를 입력합니다."),
             Page.Router => ("공유기 관리자 주소", "브라우저에서 ipTIME 관리 화면을 열 때 쓰는 주소를 입력하세요."),
             Page.Pc => ("켤 PC", "공유기 [특수 기능 → WOL 기능] 목록에 등록된 PC를 지정합니다."),
-            Page.Connect => ("원격 데스크톱 접속 방법", "쓰는 방법을 켜세요. 둘 다 켜면 접속할 때마다 고를 수 있습니다."),
+            Page.Connect => ("접속 방법", "쓰는 방법을 켜세요. 여러 개를 켜면 접속할 때마다 고를 수 있습니다."),
             _ => ("확인", "아래 내용으로 저장합니다."),
         };
         _strip.Current = i;
@@ -422,6 +440,7 @@ public sealed class SetupWizardForm : Form
         Line("켤 PC", _work.WolPcName + (_work.WolPcMac.Length > 0 ? $"  ·  {_work.WolPcMac}" : ""));
         Line("일반 접속", _work.PublicHost.Length > 0 ? InputRules.HostPort(_work.PublicHost, _work.PublicRdpPort) : "사용 안 함");
         Line("VPN 접속", _work.VpnName.Length > 0 ? $"{_work.VpnName} 연결 후 {InputRules.HostPort(_work.VpnDesktopIp, _work.VpnRdpPort)}" : "사용 안 함");
+        Line("크롬 원격 데스크톱", !_work.UseCrd ? "사용 안 함" : _work.CrdHostId.Length > 0 ? "저장된 기기로 바로 연결" : "브라우저에서 기기 고르기");
         _summary.ResumeLayout(true);
     }
 

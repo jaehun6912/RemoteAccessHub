@@ -20,6 +20,9 @@ public sealed class SettingsForm : Form
     private readonly TextBox _vpnIp = new();
     private readonly NumericUpDown _vpnPort = new() { Minimum = 1, Maximum = 65535 };
     private readonly NumericUpDown _vpnWait = new() { Minimum = 10, Maximum = 900 };
+    private readonly CheckBox _useCrd = new() { Text = "접속 방식에 '크롬 원격 데스크톱' 넣기" };
+    private readonly TextBox _crdHostId = new();
+    private readonly ComboBox _crdCheck = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly NumericUpDown _bootWait = new() { Minimum = 10, Maximum = 3600 };
     private readonly CheckBox _fullScreen = new() { Text = "원격 데스크톱 전체 화면(/f)" };
     private readonly CheckBox _autoCollapse = new() { Text = "로그인이 확인되면 공유기 화면 자동 접기" };
@@ -32,6 +35,13 @@ public sealed class SettingsForm : Form
     private readonly TextBox _wolMenu = new();
     private readonly TextBox _wakePattern = new();
     private readonly NumericUpDown _probeInterval = new() { Minimum = 5, Maximum = 600 };
+
+    private static readonly (string Label, CrdBootCheck Mode)[] CrdCheckChoices =
+    {
+        ("확인 안 함 (바로 열기)", CrdBootCheck.None),
+        ("일반 접속 주소·포트로 확인", CrdBootCheck.Direct),
+        ("VPN 연결 후 내부 IP·포트로 확인", CrdBootCheck.Vpn),
+    };
 
     private static readonly (string Label, ThemeMode Mode)[] ThemeChoices =
     {
@@ -84,6 +94,21 @@ public sealed class SettingsForm : Form
                 Row(t, "데스크톱 내부 IP", _vpnIp, "VPN 연결 후 사용할 집 내부 IP. 예: 192.168.0.10");
                 Row(t, "내부 RDP 포트", _vpnPort);
                 Row(t, "VPN 연결 대기 시간(초)", _vpnWait);
+            }),
+            Section("크롬 원격 데스크톱 (Chrome Remote Desktop)", t =>
+            {
+                Check(t, _useCrd);
+                Row(t, "기기 ID (선택)", _crdHostId, "remotedesktop.google.com/access에서 그 PC에 연결했을 때 주소의 session/ 뒤 부분. 주소 전체를 붙여 넣어도 됩니다. 비우면 기기 목록 화면을 엽니다.");
+                Row(t, "부팅 확인 방법", _crdCheck, "크롬 원격 데스크톱은 열어 둔 포트가 없어 PC가 켜졌는지 확인할 방법이 없습니다. 확인하려면 위의 일반 접속 또는 VPN 설정을 빌려 씁니다.");
+                var open = new FlatButton { Text = "기기 목록 열기", Variant = ButtonVariant.Secondary, Glyph = Theme.Glyph.Globe };
+                open.Size = new Size(Math.Max(L(140), open.PreferredWidth()), L(34));
+                open.Click += (_, _) => OpenCrdAccessPage();
+                t.Controls.Add(open, 1, t.RowCount);
+                t.RowCount++;
+                var crdNote = new Label { Text = "대상 PC에 크롬 원격 데스크톱 호스트가 설치되어 있어야 합니다. 구글 로그인과 PIN 입력은 브라우저에서 직접 하며, 프로그램은 저장하지 않습니다.", AutoSize = true, MaximumSize = new Size(L(660), 0), Margin = new Padding(0, L(6), 0, 0), Tag = "sub", Font = Theme.UiFont(8.5f) };
+                t.Controls.Add(crdNote, 0, t.RowCount);
+                t.SetColumnSpan(crdNote, 2);
+                t.RowCount++;
             }),
             Section("동작과 화면", t =>
             {
@@ -163,6 +188,9 @@ public sealed class SettingsForm : Form
         CancelButton = cancel;
 
         foreach (var (label, _) in ThemeChoices) _theme.Items.Add(label);
+        foreach (var (label, _) in CrdCheckChoices) _crdCheck.Items.Add(label);
+        _crdCheck.DrawMode = DrawMode.OwnerDrawFixed;
+        _crdCheck.DrawItem += DrawThemedComboItem;
 
         _theme.DrawMode = DrawMode.OwnerDrawFixed;
         _theme.DrawItem += DrawThemedComboItem;
@@ -263,6 +291,9 @@ public sealed class SettingsForm : Form
         _vpnIp.Text = _work.VpnDesktopIp;
         _vpnPort.Value = Clamp(_work.VpnRdpPort, 1, 65535);
         _vpnWait.Value = Clamp(_work.VpnWaitSeconds, 10, 900);
+        _useCrd.Checked = _work.UseCrd;
+        _crdHostId.Text = _work.CrdHostId;
+        _crdCheck.SelectedIndex = Math.Max(0, Array.FindIndex(CrdCheckChoices, c => c.Mode == _work.CrdCheck));
         _bootWait.Value = Clamp(_work.BootWaitSeconds, 10, 3600);
         _fullScreen.Checked = _work.RdpFullScreen;
         _autoCollapse.Checked = _work.AutoCollapseAfterLogin;
@@ -292,6 +323,14 @@ public sealed class SettingsForm : Form
         _work.VpnDesktopIp = _vpnIp.Text.Trim();
         _work.VpnRdpPort = (int)_vpnPort.Value;
         _work.VpnWaitSeconds = (int)_vpnWait.Value;
+        _work.UseCrd = _useCrd.Checked;
+        _work.CrdHostId = InputRules.NormalizeCrdHostId(_crdHostId.Text) ?? _crdHostId.Text.Trim();
+        _work.CrdBootCheckMode = (_crdCheck.SelectedIndex >= 0 ? CrdCheckChoices[_crdCheck.SelectedIndex].Mode : CrdBootCheck.None) switch
+        {
+            CrdBootCheck.Direct => "direct",
+            CrdBootCheck.Vpn => "vpn",
+            _ => "none",
+        };
         _work.BootWaitSeconds = (int)_bootWait.Value;
         _work.RdpFullScreen = _fullScreen.Checked;
         _work.AutoCollapseAfterLogin = _autoCollapse.Checked;
@@ -314,6 +353,7 @@ public sealed class SettingsForm : Form
         if (_work.PublicHost.Length > 0 && !InputRules.IsValidHost(_work.PublicHost)) errors.Add("일반 접속 주소 형식이 올바르지 않습니다.");
         if (_work.VpnName.Length > 0 && !InputRules.IsValidVpnName(_work.VpnName)) errors.Add("VPN 연결 이름에 사용할 수 없는 문자가 있습니다.");
         if (_work.VpnDesktopIp.Length > 0 && !InputRules.IsValidHost(_work.VpnDesktopIp)) errors.Add("데스크톱 내부 IP 형식이 올바르지 않습니다.");
+        if (_work.CrdHostId.Length > 0 && InputRules.NormalizeCrdHostId(_work.CrdHostId) == null) errors.Add("크롬 원격 데스크톱 기기 ID 형식이 올바르지 않습니다(16진수와 - 만).");
         if (errors.Count > 0)
         {
             MessageBox.Show(this, string.Join("\n", errors), "설정 확인", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -322,6 +362,18 @@ public sealed class SettingsForm : Form
         if (InputRules.NormalizeMac(_work.WolPcMac) is { } mac) _work.WolPcMac = mac;
         DialogResult = DialogResult.OK;
         Close();
+    }
+
+    private void OpenCrdAccessPage()
+    {
+        try
+        {
+            new CrdLauncher().Open(null);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "기기 목록을 열지 못했습니다: " + ex.Message, "크롬 원격 데스크톱", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     private void OnExport()

@@ -140,3 +140,108 @@ public class InputRulesTests
         Assert.Equal("", new AppSettings().WolPcName);
     }
 }
+
+public class CrdSettingsTests
+{
+    [Theory]
+    [InlineData("7f3a1b9c2d4e5f60", "7f3a1b9c2d4e5f60")]
+    [InlineData("  7F3A1B9C2D4E5F60  ", "7F3A1B9C2D4E5F60")]
+    [InlineData("\"7f3a1b9c2d4e5f60\"", "7f3a1b9c2d4e5f60")]
+    [InlineData("1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d", "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d")]
+    [InlineData("https://remotedesktop.google.com/access/session/7f3a1b9c2d4e5f60", "7f3a1b9c2d4e5f60")]
+    [InlineData("https://remotedesktop.google.com/access/session/7f3a1b9c2d4e5f60?hl=ko", "7f3a1b9c2d4e5f60")]
+    [InlineData("remotedesktop.google.com/access/session/7f3a1b9c2d4e5f60#top", "7f3a1b9c2d4e5f60")]
+    public void Crd_host_id_accepts_id_or_pasted_session_url(string input, string expected)
+        => Assert.Equal(expected, InputRules.NormalizeCrdHostId(input));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    [InlineData("7f3a1b9c")]                                 // 너무 짧음
+    [InlineData("7f3a1b9c2d4e5f60zz")]                       // 16진수가 아닌 글자
+    [InlineData("7f3a1b9c2d4e5f60 && calc")]                 // 셸 메타문자
+    [InlineData("--------------------")]                     // 16진수 숫자가 없음
+    [InlineData("javascript:alert(1)")]
+    [InlineData("https://evil.example.com/access/session/x")]
+    public void Crd_host_id_rejects_anything_else(string? input)
+        => Assert.Null(InputRules.NormalizeCrdHostId(input));
+
+    private static AppSettings Crd(string check) => new()
+    {
+        UseCrd = true, CrdHostId = "7f3a1b9c2d4e5f60", CrdBootCheckMode = check,
+        PublicHost = "myhome.iptime.org", PublicRdpPort = 41000,
+        VpnName = "HomeVPN", VpnDesktopIp = "192.168.0.10", VpnRdpPort = 3389,
+        BootWaitSeconds = 180, VpnWaitSeconds = 60,
+    };
+
+    [Theory]
+    [InlineData("none", CrdBootCheck.None)]
+    [InlineData("direct", CrdBootCheck.Direct)]
+    [InlineData("VPN", CrdBootCheck.Vpn)]
+    [InlineData("", CrdBootCheck.None)]
+    [InlineData("무엇이든", CrdBootCheck.None)]
+    public void Crd_boot_check_mode_is_parsed(string stored, CrdBootCheck expected)
+        => Assert.Equal(expected, new AppSettings { CrdBootCheckMode = stored }.CrdCheck);
+
+    [Fact]
+    public void Crd_mode_checks_only_what_it_uses()
+    {
+        // 부팅 확인을 안 하면 일반 접속·VPN 설정이 비어 있어도 막지 않는다.
+        var bare = new AppSettings { UseCrd = true };
+        Assert.Empty(bare.ValidateConnect(ConnectMode.Crd));
+        Assert.NotEmpty(bare.ValidateConnect(ConnectMode.Direct));
+
+        Assert.Empty(Crd("none").ValidateConnect(ConnectMode.Crd));
+        Assert.Empty(Crd("direct").ValidateConnect(ConnectMode.Crd));
+        Assert.Empty(Crd("vpn").ValidateConnect(ConnectMode.Crd));
+    }
+
+    [Fact]
+    public void Crd_mode_reports_missing_pieces()
+    {
+        var off = Crd("none");
+        off.UseCrd = false;
+        Assert.NotEmpty(off.ValidateConnect(ConnectMode.Crd));
+
+        var badId = Crd("none");
+        badId.CrdHostId = "not a device id";
+        Assert.Contains("기기 ID", string.Join("\n", badId.ValidateConnect(ConnectMode.Crd)));
+
+        var noDirect = Crd("direct");
+        noDirect.PublicHost = "";
+        Assert.NotEmpty(noDirect.ValidateConnect(ConnectMode.Crd));
+
+        var noVpn = Crd("vpn");
+        noVpn.VpnDesktopIp = "";
+        Assert.NotEmpty(noVpn.ValidateConnect(ConnectMode.Crd));
+
+        var badWait = Crd("direct");
+        badWait.BootWaitSeconds = 1;
+        Assert.NotEmpty(badWait.ValidateConnect(ConnectMode.Crd));
+        // 부팅 확인을 안 하면 부팅 대기 시간은 쓰이지 않으므로 검사하지 않는다.
+        var skipWait = Crd("none");
+        skipWait.BootWaitSeconds = 1;
+        Assert.Empty(skipWait.ValidateConnect(ConnectMode.Crd));
+    }
+
+    [Theory]
+    [InlineData("direct", ConnectMode.Direct)]
+    [InlineData("vpn", ConnectMode.Vpn)]
+    [InlineData("crd", ConnectMode.Crd)]
+    [InlineData("CRD", ConnectMode.Crd)]
+    [InlineData("", ConnectMode.Direct)]
+    public void Last_connect_mode_round_trips(string stored, ConnectMode expected)
+        => Assert.Equal(expected, new AppSettings { LastConnectMode = stored }.LastMode);
+
+    [Fact]
+    public void Crd_settings_survive_export_and_import()
+    {
+        var json = Crd("vpn").ToExportJson();
+        var back = AppSettings.FromExportJson(json, out var error);
+        Assert.Null(error);
+        Assert.True(back!.UseCrd);
+        Assert.Equal("7f3a1b9c2d4e5f60", back.CrdHostId);
+        Assert.Equal(CrdBootCheck.Vpn, back.CrdCheck);
+    }
+}

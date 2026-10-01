@@ -213,7 +213,7 @@ public sealed class FlowTracker
     {
         _bootWaitSeconds = Math.Max(1, bootWaitSeconds);
         _waitStartedAt = null;
-        Boot.Set(StepState.Active, mode == ConnectMode.Vpn ? "VPN 확인" : "준비");
+        Boot.Set(StepState.Active, mode switch { ConnectMode.Vpn => "VPN 확인", ConnectMode.Crd => "크롬 원격 데스크톱 준비", _ => "준비" });
         Remote.Set(StepState.Pending, "대기");
         Raise();
     }
@@ -237,8 +237,17 @@ public sealed class FlowTracker
                 Boot.Set(StepState.Done, $"응답 확인 · {Hm(now)}");
                 WolBootText = $"PC 부팅: 응답 확인 {now:HH:mm:ss}";
                 break;
+            case ConnectStage.BootCheckSkipped:
+                // 크롬 원격 데스크톱은 열어 둔 포트가 없어 부팅을 확인하지 않는다. 확인한 척하지 않는다.
+                _waitStartedAt = null;
+                Boot.Set(StepState.Pending, "확인 안 함");
+                WolBootText = "PC 부팅: 확인 안 함";
+                break;
             case ConnectStage.LaunchingRdp:
                 Remote.Set(StepState.Active, "원격 데스크톱 실행 중");
+                break;
+            case ConnectStage.LaunchingCrd:
+                Remote.Set(StepState.Active, "크롬 원격 데스크톱 여는 중");
                 break;
         }
         Raise();
@@ -265,8 +274,9 @@ public sealed class FlowTracker
         _waitStartedAt = null;
         if (o.Success)
         {
-            if (Boot.State != StepState.Done) Boot.Set(StepState.Done, $"응답 확인 · {Hm(now)}");
-            Remote.Set(StepState.Done, $"원격 데스크톱 실행 · {Hm(now)}");
+            // 부팅 확인을 하지 않은 경우(크롬 원격 데스크톱)는 확인한 것처럼 표시하지 않는다.
+            if (Boot.State != StepState.Done && o.PcRespondedOnPort) Boot.Set(StepState.Done, $"응답 확인 · {Hm(now)}");
+            Remote.Set(StepState.Done, o.Mode == ConnectMode.Crd ? $"크롬 원격 데스크톱 열림 · {Hm(now)}" : $"원격 데스크톱 실행 · {Hm(now)}");
         }
         else if (o.IsCancelled)
         {

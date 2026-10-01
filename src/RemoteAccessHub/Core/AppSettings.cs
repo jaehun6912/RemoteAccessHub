@@ -7,6 +7,19 @@ public enum ConnectMode
 {
     Direct,
     Vpn,
+    /// <summary>크롬 원격 데스크톱(구글 중계). 포트포워딩·VPN 없이 브라우저로 연결한다.</summary>
+    Crd,
+}
+
+/// <summary>크롬 원격 데스크톱으로 접속할 때 PC가 켜졌는지 확인하는 방법.</summary>
+public enum CrdBootCheck
+{
+    /// <summary>확인하지 않고 바로 연다(크롬 원격 데스크톱은 열어 둘 포트가 없다).</summary>
+    None,
+    /// <summary>일반 접속 주소·포트가 응답하는지로 확인.</summary>
+    Direct,
+    /// <summary>VPN을 연결한 뒤 내부 IP·포트가 응답하는지로 확인.</summary>
+    Vpn,
 }
 
 /// <summary>
@@ -36,6 +49,16 @@ public sealed class AppSettings
     public string VpnDesktopIp { get; set; } = "";
     public int VpnRdpPort { get; set; } = 3389;
     public int VpnWaitSeconds { get; set; } = 120;
+
+    // --- 크롬 원격 데스크톱(Chrome Remote Desktop) ---
+    /// <summary>접속 방식에 "크롬 원격 데스크톱"을 넣을지.</summary>
+    public bool UseCrd { get; set; }
+
+    /// <summary>크롬 원격 데스크톱 기기 ID. 비어 있으면 기기 목록 화면을 연다.</summary>
+    public string CrdHostId { get; set; } = "";
+
+    /// <summary>"none" | "direct" | "vpn". 부팅 확인 방법.</summary>
+    public string CrdBootCheckMode { get; set; } = "none";
 
     // --- 공통 ---
     public int BootWaitSeconds { get; set; } = 180;
@@ -70,7 +93,20 @@ public sealed class AppSettings
     public int SessionProbeIntervalSeconds { get; set; } = 15;
 
     [JsonIgnore]
-    public ConnectMode LastMode => string.Equals(LastConnectMode, "vpn", StringComparison.OrdinalIgnoreCase) ? ConnectMode.Vpn : ConnectMode.Direct;
+    public CrdBootCheck CrdCheck => (CrdBootCheckMode ?? "").Trim().ToLowerInvariant() switch
+    {
+        "direct" => CrdBootCheck.Direct,
+        "vpn" => CrdBootCheck.Vpn,
+        _ => CrdBootCheck.None,
+    };
+
+    [JsonIgnore]
+    public ConnectMode LastMode => (LastConnectMode ?? "").Trim().ToLowerInvariant() switch
+    {
+        "vpn" => ConnectMode.Vpn,
+        "crd" => ConnectMode.Crd,
+        _ => ConnectMode.Direct,
+    };
 
     [JsonIgnore]
     public Uri? RouterUri => InputRules.TryParseRouterUrl(RouterUrl, out var u) ? u : null;
@@ -177,6 +213,28 @@ public sealed class AppSettings
     public IReadOnlyList<string> ValidateConnect(ConnectMode mode)
     {
         var errors = new List<string>();
+        if (mode == ConnectMode.Crd)
+        {
+            if (!UseCrd)
+                errors.Add("크롬 원격 데스크톱 접속이 꺼져 있습니다.");
+            if (CrdHostId.Length > 0 && InputRules.NormalizeCrdHostId(CrdHostId) == null)
+                errors.Add("크롬 원격 데스크톱 기기 ID 형식이 올바르지 않습니다.");
+            if (CrdCheck == CrdBootCheck.Direct)
+            {
+                if (!InputRules.IsValidHost(PublicHost)) errors.Add("부팅 확인에 쓸 일반 접속 주소가 올바르지 않습니다.");
+                if (!InputRules.IsValidPort(PublicRdpPort)) errors.Add("부팅 확인에 쓸 일반 접속 포트는 1~65535 사이여야 합니다.");
+            }
+            else if (CrdCheck == CrdBootCheck.Vpn)
+            {
+                if (!InputRules.IsValidVpnName(VpnName)) errors.Add("부팅 확인에 쓸 Windows VPN 연결 이름이 올바르지 않습니다.");
+                if (!InputRules.IsValidHost(VpnDesktopIp)) errors.Add("부팅 확인에 쓸 데스크톱 내부 IP가 올바르지 않습니다.");
+                if (!InputRules.IsValidPort(VpnRdpPort)) errors.Add("부팅 확인에 쓸 내부 포트는 1~65535 사이여야 합니다.");
+                if (VpnWaitSeconds is < 10 or > 900) errors.Add("VPN 연결 대기 시간은 10~900초 사이여야 합니다.");
+            }
+            if (CrdCheck != CrdBootCheck.None && BootWaitSeconds is < 10 or > 3600)
+                errors.Add("부팅 대기 시간은 10~3600초 사이여야 합니다.");
+            return errors;
+        }
         if (mode == ConnectMode.Direct)
         {
             if (!InputRules.IsValidHost(PublicHost))

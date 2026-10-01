@@ -50,6 +50,14 @@ public sealed class FakePortProbe : IPortProbe
     }
 }
 
+public sealed class FakeCrdLauncher : ICrdLauncher
+{
+    public List<string> Opened { get; } = new();
+    public int OpenCount => Opened.Count;
+
+    public void Open(string? hostId) => Opened.Add(CrdLauncher.BuildUrl(hostId));
+}
+
 public sealed class FakeRdpLauncher : IRdpLauncher
 {
     public List<(string Host, int Port, bool FullScreen)> Launches { get; } = new();

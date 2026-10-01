@@ -98,6 +98,32 @@ public static partial class InputRules
         return true;
     }
 
+    /// <summary>
+    /// 크롬 원격 데스크톱 기기 ID를 정리한다. 기기 목록에서 연결했을 때 주소창에 보이는
+    /// https://remotedesktop.google.com/access/session/&lt;ID&gt; 를 통째로 붙여 넣어도 받는다.
+    /// 16진수와 '-'로만 이루어진 16~64자만 허용한다(주소를 만들 때 그대로 쓰기 때문).
+    /// </summary>
+    public static string? NormalizeCrdHostId(string? value)
+    {
+        var s = (value ?? "").Trim().Trim('"');
+        if (s.Length == 0) return null;
+        if (s.Contains("://", StringComparison.Ordinal) || s.Contains('/'))
+        {
+            var parts = s.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            s = parts.Length == 0 ? "" : parts[^1];
+            var q = s.IndexOfAny(new[] { '?', '#' });
+            if (q >= 0) s = s[..q];
+        }
+        if (s.Length is < 16 or > 64) return null;
+        var hex = 0;
+        foreach (var c in s)
+        {
+            if (Uri.IsHexDigit(c)) hex++;
+            else if (c != '-') return null;
+        }
+        return hex >= 16 ? s : null;
+    }
+
     /// <summary>mstsc /v: 인수용 host:port 문자열 (IPv6는 대괄호).</summary>
     public static string HostPort(string host, int port)
     {

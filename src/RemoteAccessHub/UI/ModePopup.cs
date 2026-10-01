@@ -8,17 +8,43 @@ public sealed record ModeOption(ConnectMode Mode, string Title, string Detail, b
 /// <summary>접속 방식 선택지. 방식마다 그 방식에 필요한 설정만 검사한다.</summary>
 public static class ModeOptions
 {
-    public static IReadOnlyList<ModeOption> For(AppSettings s) => new[] { Build(s, ConnectMode.Direct), Build(s, ConnectMode.Vpn) };
+    public static IReadOnlyList<ModeOption> For(AppSettings s)
+    {
+        var list = new List<ModeOption> { Build(s, ConnectMode.Direct), Build(s, ConnectMode.Vpn) };
+        // 크롬 원격 데스크톱은 설정에서 켠 경우에만 선택지에 넣는다(쓰지 않는 사람에게 빈 항목을 보이지 않도록).
+        if (s.UseCrd) list.Add(Build(s, ConnectMode.Crd));
+        return list;
+    }
 
     public static ModeOption Build(AppSettings s, ConnectMode mode)
     {
-        var title = mode == ConnectMode.Vpn ? "VPN 접속" : "일반 접속";
+        var title = mode switch
+        {
+            ConnectMode.Vpn => "VPN 접속",
+            ConnectMode.Crd => "크롬 원격 데스크톱",
+            _ => "일반 접속",
+        };
         if (s.ValidateConnect(mode).Count > 0)
             return new(mode, title, "설정 필요 · ⚙ 설정에서 입력", false);
-        var detail = mode == ConnectMode.Vpn
-            ? $"{s.VpnName.Trim()} 연결 후 {InputRules.HostPort(s.VpnDesktopIp, s.VpnRdpPort)}"
-            : InputRules.HostPort(s.PublicHost, s.PublicRdpPort);
+        var detail = mode switch
+        {
+            ConnectMode.Vpn => $"{s.VpnName.Trim()} 연결 후 {InputRules.HostPort(s.VpnDesktopIp, s.VpnRdpPort)}",
+            ConnectMode.Crd => CrdDetail(s),
+            _ => InputRules.HostPort(s.PublicHost, s.PublicRdpPort),
+        };
         return new(mode, title, detail, true);
+    }
+
+    private static string CrdDetail(AppSettings s)
+    {
+        var where = InputRules.NormalizeCrdHostId(s.CrdHostId) == null ? "브라우저에서 기기 고르기" : "저장된 기기로 바로 연결";
+        var check = s.CrdCheck switch
+        {
+            CrdBootCheck.Direct => " · 부팅 확인: 일반 접속 주소",
+            CrdBootCheck.Vpn => " · 부팅 확인: VPN",
+            _ => " · 부팅 확인 없음",
+        };
+        return where + check;
     }
 }
 
@@ -34,6 +60,9 @@ public sealed class ModePopup : Form
 
     public ConnectMode? Result { get; private set; }
     public string Heading => _heading.Text;
+
+    /// <summary>표시된 선택지 수(자체검사에서도 사용).</summary>
+    public int OptionCount => _rows.Count;
     public IReadOnlyList<ModeOption> Options { get; }
 
     /// <summary>선택이 확정되면 창이 닫힌 뒤 호출된다.</summary>
@@ -149,6 +178,9 @@ public sealed class ModePopup : Form
                 return true;
             case Keys.D2 or Keys.NumPad2 when Options.Count > 1:
                 Choose(Options[1].Mode);
+                return true;
+            case Keys.D3 or Keys.NumPad3 when Options.Count > 2:
+                Choose(Options[2].Mode);
                 return true;
             case Keys.Up:
             case Keys.Down:
