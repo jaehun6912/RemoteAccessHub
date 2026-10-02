@@ -21,6 +21,7 @@ public sealed class FlatButton : Button
     private ButtonVariant _variant = ButtonVariant.Secondary;
     private string _glyph = "";
     private Image? _glyphImage;
+    private bool _attention;
     private int _splitWidth;
 
     public event EventHandler? DropDownClick;
@@ -31,6 +32,10 @@ public sealed class FlatButton : Button
     /// <summary>왼쪽 아이콘 글리프(Theme.Glyph).</summary>
     [DefaultValue("")]
     public string Glyph { get => _glyph; set { _glyph = value ?? ""; Invalidate(); } }
+
+    /// <summary>눈에 띄게 강조할 차례(깜빡임의 '켜진' 쪽). 켜면 주 버튼처럼 칠한다.</summary>
+    [DefaultValue(false)]
+    public bool Attention { get => _attention; set { if (_attention == value) return; _attention = value; Invalidate(); } }
 
     /// <summary>글리프 대신 쓸 그림 아이콘(없으면 글리프). 그림은 버튼이 소유하지 않는다.</summary>
     [DefaultValue(null)]
@@ -113,7 +118,9 @@ public sealed class FlatButton : Button
         Drawing.Smooth(g);
 
         Color fill, border, text;
-        switch (_variant)
+        // 깜빡임의 '켜진' 쪽: 모양은 그대로 두고 색만 주 버튼처럼 바꾼다.
+        var variant = _attention && Enabled ? ButtonVariant.Primary : _variant;
+        switch (variant)
         {
             case ButtonVariant.Primary:
                 fill = !Enabled ? p.SurfaceAlt : _pressed ? p.AccentPressed : _hover ? p.AccentHover : p.Accent;

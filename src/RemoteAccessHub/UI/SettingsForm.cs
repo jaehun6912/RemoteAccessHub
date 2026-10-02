@@ -36,6 +36,7 @@ public sealed class SettingsForm : Form
     private readonly TextBox _wakePattern = new();
     private readonly NumericUpDown _probeInterval = new() { Minimum = 5, Maximum = 600 };
     private readonly ComboBox _powerCheck = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly CheckBox _blinkConnect = new() { Text = "PC가 켜져 있으면 [PC 접속] 버튼을 천천히 깜빡이기" };
     private readonly NumericUpDown _powerSeconds = new() { Minimum = 15, Maximum = 3600, Increment = 15 };
 
     private static readonly (string Label, PowerSource Mode)[] PowerChoices =
@@ -138,6 +139,7 @@ public sealed class SettingsForm : Form
             {
                 Row(t, "확인 방법", _powerCheck, "윗줄 배지에 PC가 켜져 있는지 보여 줍니다. 확인하려고 VPN을 연결하지는 않습니다.");
                 Row(t, "확인 주기(초)", _powerSeconds, "배지를 눌러 언제든 바로 확인할 수 있습니다.");
+                Check(t, _blinkConnect);
                 Note(t, "포트가 응답하면 켜진 것이 확실합니다. 응답이 없을 때는 꺼진 것인지 포트·방화벽 때문인지 구분할 수 없어 '응답 없음'으로만 표시합니다.\n"
                     + "확인할 주소는 위의 일반 접속·VPN 설정을 그대로 씁니다. 둘 다 없으면 배지가 보이지 않습니다.");
             }),
@@ -369,6 +371,7 @@ public sealed class SettingsForm : Form
         _probeInterval.Value = Clamp(_work.SessionProbeIntervalSeconds, 5, 600);
         _powerCheck.SelectedIndex = Math.Max(0, Array.FindIndex(PowerChoices, c => c.Mode == _work.PowerCheck));
         _powerSeconds.Value = Clamp(_work.PowerCheckSeconds, 15, 3600);
+        _blinkConnect.Checked = _work.BlinkConnectWhenPcOn;
     }
 
     private static decimal Clamp(int v, int min, int max) => Math.Min(max, Math.Max(min, v));
@@ -413,6 +416,7 @@ public sealed class SettingsForm : Form
             _ => "auto",
         };
         _work.PowerCheckSeconds = (int)_powerSeconds.Value;
+        _work.BlinkConnectWhenPcOn = _blinkConnect.Checked;
     }
 
     private void OnSave()

@@ -1,6 +1,7 @@
 using RemoteAccessHub.Core;
 using RemoteAccessHub.SelfTest;
 using RemoteAccessHub.Services;
+using RemoteAccessHub.UI;
 using Xunit;
 
 namespace RemoteAccessHub.Tests;
@@ -182,5 +183,42 @@ public class PowerWatcherTests
         await w.CheckNowAsync();
         Assert.Equal("192.168.0.10:3389", port.Targets[0]);
         Assert.Equal("VPN 내부 IP", w.CurrentTarget()!.Via);
+    }
+}
+
+public class ConnectBlinkTests
+{
+    [Fact]
+    public void Blinks_only_when_the_pc_is_known_to_be_on()
+    {
+        Assert.True(ActionGate.ShouldBlinkConnect(true, PcPowerState.On, connectEnabled: true, busy: false, exiting: false));
+        // 응답 없음은 꺼진 것인지 포트가 막힌 것인지 모르므로 깜빡이지 않는다.
+        foreach (var state in new[] { PcPowerState.NoAnswer, PcPowerState.Unknown, PcPowerState.Checking, PcPowerState.Disabled })
+            Assert.False(ActionGate.ShouldBlinkConnect(true, state, connectEnabled: true, busy: false, exiting: false));
+    }
+
+    [Fact]
+    public void Blink_stops_while_the_button_cannot_be_pressed()
+    {
+        Assert.False(ActionGate.ShouldBlinkConnect(true, PcPowerState.On, connectEnabled: false, busy: false, exiting: false));
+        Assert.False(ActionGate.ShouldBlinkConnect(true, PcPowerState.On, connectEnabled: true, busy: true, exiting: false));
+        Assert.False(ActionGate.ShouldBlinkConnect(true, PcPowerState.On, connectEnabled: true, busy: false, exiting: true));
+    }
+
+    [Fact]
+    public void Setting_turns_it_off()
+    {
+        Assert.False(ActionGate.ShouldBlinkConnect(false, PcPowerState.On, connectEnabled: true, busy: false, exiting: false));
+        Assert.True(new AppSettings().BlinkConnectWhenPcOn);
+    }
+
+    [Fact]
+    public void Setting_survives_export_and_import()
+    {
+        var s = new AppSettings { BlinkConnectWhenPcOn = false, PowerCheckMode = "direct" };
+        var back = AppSettings.FromExportJson(s.ToExportJson(), out var error);
+        Assert.Null(error);
+        Assert.False(back!.BlinkConnectWhenPcOn);
+        Assert.Equal(PowerSource.Direct, back.PowerCheck);
     }
 }

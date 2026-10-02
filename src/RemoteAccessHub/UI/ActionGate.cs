@@ -1,3 +1,5 @@
+using RemoteAccessHub.Services;
+
 namespace RemoteAccessHub.UI;
 
 /// <summary>동작 버튼([PC 켜고 접속]·[PC 켜기]·[PC 접속])을 누를 수 있는지 정한다.</summary>
@@ -17,4 +19,14 @@ public static class ActionGate
         var connect = idle && !preparing;
         return (wake, wake, connect);
     }
+
+    /// <summary>
+    /// [PC 접속] 버튼을 깜빡여 눈에 띄게 할 때인지. PC가 켜진 것이 <b>확인됐을 때만</b> 깜빡인다.
+    /// 응답이 없거나(꺼졌을 수도, 포트가 막혔을 수도) 아직 확인 전이면 깜빡이지 않는다.
+    /// </summary>
+    /// <param name="setting">설정에서 켰는지</param>
+    /// <param name="power">지금 전원 배지 상태</param>
+    /// <param name="connectEnabled">[PC 접속]을 누를 수 있는 상태인지</param>
+    public static bool ShouldBlinkConnect(bool setting, PcPowerState power, bool connectEnabled, bool busy, bool exiting)
+        => setting && power == PcPowerState.On && connectEnabled && !busy && !exiting;
 }

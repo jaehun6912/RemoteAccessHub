@@ -1060,7 +1060,31 @@ internal sealed class SelfTestDriver
                     && withVpn.State == PcPowerState.On && _port.Targets.Count > targetsBefore,
                 $"vpn없음={noVpn.State} connectCalls+{_vpn.ConnectCalls - callsBefore} vpn있음={withVpn.State}");
 
-            // 4) 끄면 배지도 사라지고 네트워크를 건드리지 않음
+            // 4) PC가 켜진 것이 확인되면 [PC 접속]이 깜빡이고, 응답이 없으면 멈춘다
+            s.PowerCheckMode = "direct";
+            s.BlinkConnectWhenPcOn = true;
+            _port.NeverOpen = false;
+            _port.OpenAfterAttempts = 0;
+            await _form.CheckPowerNowAsync();
+            var blinkOn = _form.ConnectBlinking;
+            await WaitUntilAsync(() => _form.ConnectHighlighted, TimeSpan.FromSeconds(3));
+            var litUp = _form.ConnectHighlighted;
+            await WaitUntilAsync(() => !_form.ConnectHighlighted, TimeSpan.FromSeconds(3));
+            var wentBack = !_form.ConnectHighlighted;
+            _port.NeverOpen = true;
+            await _form.CheckPowerNowAsync();
+            Check("전원 배지: PC가 켜진 것이 확인될 때만 [PC 접속]이 깜빡임",
+                blinkOn && litUp && wentBack && !_form.ConnectBlinking && !_form.ConnectHighlighted,
+                $"켜짐에서 깜빡임={blinkOn} 강조됨={litUp} 되돌아옴={wentBack} 응답없음에서 깜빡임={_form.ConnectBlinking}");
+
+            s.BlinkConnectWhenPcOn = false;
+            _port.NeverOpen = false;
+            await _form.CheckPowerNowAsync();
+            Check("전원 배지: 설정에서 끄면 깜빡이지 않음", !_form.ConnectBlinking && !_form.ConnectHighlighted,
+                $"깜빡임={_form.ConnectBlinking} 강조됨={_form.ConnectHighlighted}");
+            s.BlinkConnectWhenPcOn = true;
+
+            // 5) 끄면 배지도 사라지고 네트워크를 건드리지 않음
             s.PowerCheckMode = "off";
             var attempts = _port.Attempts;
             await _form.CheckPowerNowAsync();

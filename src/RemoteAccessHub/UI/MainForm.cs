@@ -31,6 +31,8 @@ public sealed class MainForm : Form
     private readonly IRdpLauncher _rdp;
     private readonly ICrdLauncher _crd;
     private readonly PowerWatcher _power;
+    /// <summary>PC가 켜져 있을 때 [PC 접속]을 천천히 깜빡이는 타이머(한 쪽 상태를 0.9초씩).</summary>
+    private readonly System.Windows.Forms.Timer _blinkTimer = new() { Interval = 900 };
 
     private readonly WebView2 _webView = new();
     private readonly Panel _browserHost = new();
@@ -102,6 +104,9 @@ public sealed class MainForm : Form
     public bool WakeEnabled => _btnWake.Enabled;
     public bool WakeConnectEnabled => _btnWakeConnect.Enabled;
     public bool ConnectEnabled => _btnConnect.Enabled;
+    /// <summary>[PC 접속]이 지금 깜빡이는 중인지(자체검사용).</summary>
+    public bool ConnectBlinking => _blinkTimer.Enabled;
+    public bool ConnectHighlighted => _btnConnect.Attention;
     public bool IsBusy => _busy;
     public string StatusText => _banner.Text;
     public BannerKind StatusKind => _banner.Kind;
@@ -261,6 +266,7 @@ public sealed class MainForm : Form
         _btnConnect.Text = "PC 접속";
         _btnConnect.Glyph = Theme.Glyph.Connect;
         _btnConnect.Click += (_, _) => ShowModePopup(wakeFirst: false);
+        _blinkTimer.Tick += (_, _) => _btnConnect.Attention = !_btnConnect.Attention;
         _tips.SetToolTip(_btnConnect, "이미 켜진 PC에 바로 접속합니다. 누르면 일반/VPN 접속을 고릅니다. (Ctrl+Shift+Enter)");
 
         _btnCancel.Text = "취소";
@@ -515,6 +521,7 @@ public sealed class MainForm : Form
             _settleCts?.Cancel();
             SaveWindowPosition();
             _log.Info("프로그램 종료 (VPN 연결은 그대로 둡니다)");
+            _blinkTimer.Stop();
             _power.Dispose();
             _mock?.Dispose();
         };
@@ -666,6 +673,22 @@ public sealed class MainForm : Form
         _stepper.SetSteps(_flow.Steps);
     }
 
+    /// <summary>
+    /// PC가 켜져 있는 것이 확인됐을 때만 [PC 접속]을 깜빡인다.
+    /// 전원 상태가 바뀌거나 버튼이 잠기면 바로 멈추고 원래 색으로 돌아간다.
+    /// </summary>
+    private void RefreshConnectBlink()
+    {
+        var blink = ActionGate.ShouldBlinkConnect(_settings.BlinkConnectWhenPcOn, _power.Status.State, _btnConnect.Enabled, _busy, _exiting);
+        if (blink == _blinkTimer.Enabled) return;
+        if (blink) _blinkTimer.Start();
+        else
+        {
+            _blinkTimer.Stop();
+            _btnConnect.Attention = false;
+        }
+    }
+
     private void RefreshPills()
     {
         var p = Theme.Current;
@@ -710,6 +733,7 @@ public sealed class MainForm : Form
             _powerPill.Set(power.PillText, color, Theme.Glyph.Power);
             _tips.SetToolTip(_powerPill, power.Detail + " (눌러서 지금 확인)");
         }
+        RefreshConnectBlink();
         LayoutHeader();
     }
 
