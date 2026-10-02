@@ -47,18 +47,15 @@ public sealed class CrdLauncher : ICrdLauncher
 
         if (app != null)
         {
-            // 1) 설치된 앱 + 브라우저 앱 ID를 아는 경우: 앱 창으로 원하는 주소까지 연다.
+            // 1) 설치된 앱이 있으면 앱 창으로 원하는 주소까지 연다.
+            //    --app-id는 앱의 첫 화면(기기 목록)만 열고 주소를 무시하므로 --app=<주소>를 쓴다.
             var browser = FindBrowser();
-            if (app.CanOpenUrlInApp && browser != null)
+            if (browser != null)
             {
                 try
                 {
-                    var args = new List<string>();
-                    if (!string.IsNullOrEmpty(app.ProfileDirectory)) args.Add("--profile-directory=" + app.ProfileDirectory);
-                    args.Add("--app-id=" + app.BrowserAppId);
-                    args.Add("--app-url=" + url);
                     _log?.Info($"크롬 원격 데스크톱 앱 열기: {where}");
-                    using var _ = ProcessRunner.StartWindowed(browser, args);
+                    using var _ = ProcessRunner.StartWindowed(browser, AppArgs(app, url));
                     return CrdOpenTarget.App;
                 }
                 catch (Exception ex)
@@ -85,6 +82,18 @@ public sealed class CrdLauncher : ICrdLauncher
         _log?.Info($"크롬 원격 데스크톱 브라우저로 열기: {where}");
         using var __ = ProcessRunner.StartWindowed(Explorer(), new[] { url });
         return CrdOpenTarget.Browser;
+    }
+
+    /// <summary>
+    /// 앱 창으로 주소를 열 때 브라우저에 넘길 인수.
+    /// --app-id는 앱의 첫 화면만 열고 주소를 무시하므로 쓰지 않는다(2026-10-03 실기기 확인).
+    /// </summary>
+    internal static IReadOnlyList<string> AppArgs(CrdInstalledApp app, string url)
+    {
+        var args = new List<string>();
+        if (!string.IsNullOrEmpty(app.ProfileDirectory)) args.Add("--profile-directory=" + app.ProfileDirectory);
+        args.Add("--app=" + url);
+        return args;
     }
 
     private static string Explorer() =>

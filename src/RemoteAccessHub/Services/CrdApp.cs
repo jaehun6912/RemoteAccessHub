@@ -17,8 +17,8 @@ public sealed record CrdInstalledApp(string PackageFamilyName, string DisplayNam
     /// <summary>앱 실행 ID. explorer.exe에 shell:AppsFolder\&lt;AUMID&gt; 로 넘기면 앱이 열린다.</summary>
     public string Aumid => PackageFamilyName + "!App";
 
-    /// <summary>브라우저에 앱 ID를 넘겨 특정 주소로 열 수 있는지.</summary>
-    public bool CanOpenUrlInApp => BrowserAppId != null;
+    /// <summary>앱 창으로 특정 주소를 열 수 있는지(브라우저 실행 파일이 있으면 가능).</summary>
+    public bool CanOpenUrlInApp => CrdLauncher.FindBrowser() != null;
 }
 
 /// <summary>

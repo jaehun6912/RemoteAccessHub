@@ -70,12 +70,33 @@ public class CrdAppFinderTests
     public void Bad_package_name_gives_null_family(string full) => Assert.Null(CrdAppFinder.FamilyName(full));
 
     [Fact]
-    public void Aumid_and_url_capability_come_from_the_found_app()
+    public void Aumid_is_built_from_the_package_family_name()
     {
-        var withId = new CrdInstalledApp("remotedesktop.google.com-1A2B_pub", "Chrome 원격 데스크톱", "abcdefghijklmnopabcdefghijklmnop", "Default", null);
-        Assert.Equal("remotedesktop.google.com-1A2B_pub!App", withId.Aumid);
-        Assert.True(withId.CanOpenUrlInApp);
-        Assert.False(withId with { BrowserAppId = null } is { CanOpenUrlInApp: true });
+        var app = new CrdInstalledApp("remotedesktop.google.com-1A2B_pub", "Chrome 원격 데스크톱", "abcdefghijklmnopabcdefghijklmnop", "Default", null);
+        Assert.Equal("remotedesktop.google.com-1A2B_pub!App", app.Aumid);
+    }
+
+    [Fact]
+    public void App_window_is_opened_at_the_exact_address()
+    {
+        var app = new CrdInstalledApp("remotedesktop.google.com-1A2B_pub", "Chrome 원격 데스크톱", "abcdefghijklmnopabcdefghijklmnop", "Profile 2", null);
+        var url = CrdLauncher.BuildUrl("1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d");
+        var args = CrdLauncher.AppArgs(app, url);
+        Assert.Equal("--profile-directory=Profile 2", args[0]);
+        Assert.Equal("--app=" + url, args[1]);
+        // --app-id는 앱 첫 화면만 열고 주소를 무시하므로 쓰지 않는다.
+        Assert.DoesNotContain(args, a => a.StartsWith("--app-id", StringComparison.Ordinal));
+        Assert.DoesNotContain(args, a => a.StartsWith("--app-url", StringComparison.Ordinal));
+        Assert.Contains("/session/1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d", args[1]);
+    }
+
+    [Fact]
+    public void Unknown_profile_is_simply_left_out()
+    {
+        var app = new CrdInstalledApp("remotedesktop.google.com-1A2B_pub", "Chrome 원격 데스크톱", null, null, null);
+        var args = CrdLauncher.AppArgs(app, CrdLauncher.AccessUrl);
+        Assert.Single(args);
+        Assert.Equal("--app=" + CrdLauncher.AccessUrl, args[0]);
     }
 
     [Fact]
