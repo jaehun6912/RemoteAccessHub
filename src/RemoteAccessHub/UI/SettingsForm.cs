@@ -35,6 +35,16 @@ public sealed class SettingsForm : Form
     private readonly TextBox _wolMenu = new();
     private readonly TextBox _wakePattern = new();
     private readonly NumericUpDown _probeInterval = new() { Minimum = 5, Maximum = 600 };
+    private readonly ComboBox _powerCheck = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly NumericUpDown _powerSeconds = new() { Minimum = 15, Maximum = 3600, Increment = 15 };
+
+    private static readonly (string Label, PowerSource Mode)[] PowerChoices =
+    {
+        ("자동 (VPN 연결 중이면 내부 IP, 아니면 일반 접속 주소)", PowerSource.Auto),
+        ("일반 접속 주소·포트로만 확인", PowerSource.Direct),
+        ("VPN 연결 중일 때 내부 IP·포트로만 확인", PowerSource.Vpn),
+        ("표시하지 않음", PowerSource.Off),
+    };
 
     private static readonly (string Label, CrdBootCheck Mode)[] CrdCheckChoices =
     {
@@ -124,6 +134,13 @@ public sealed class SettingsForm : Form
                 Note(t, CrdWhereText() + "\n대상 PC에 크롬 원격 데스크톱 호스트가 설치되어 있어야 합니다."
                     + "\n구글 로그인과 PIN 입력은 직접 하며, 프로그램은 저장하지 않습니다.");
             }),
+            Section("PC 전원 상태 표시", t =>
+            {
+                Row(t, "확인 방법", _powerCheck, "윗줄 배지에 PC가 켜져 있는지 보여 줍니다. 확인하려고 VPN을 연결하지는 않습니다.");
+                Row(t, "확인 주기(초)", _powerSeconds, "배지를 눌러 언제든 바로 확인할 수 있습니다.");
+                Note(t, "포트가 응답하면 켜진 것이 확실합니다. 응답이 없을 때는 꺼진 것인지 포트·방화벽 때문인지 구분할 수 없어 '응답 없음'으로만 표시합니다.\n"
+                    + "확인할 주소는 위의 일반 접속·VPN 설정을 그대로 씁니다. 둘 다 없으면 배지가 보이지 않습니다.");
+            }),
             Section("동작과 화면", t =>
             {
                 Row(t, "부팅 대기 시간(초)", _bootWait, "RDP 포트 응답을 기다리는 최대 시간");
@@ -200,6 +217,7 @@ public sealed class SettingsForm : Form
 
         foreach (var (label, _) in ThemeChoices) _theme.Items.Add(label);
         foreach (var (label, _) in CrdCheckChoices) _crdCheck.Items.Add(label);
+        foreach (var (label, _) in PowerChoices) _powerCheck.Items.Add(label);
         _crdCheck.DrawMode = DrawMode.OwnerDrawFixed;
         _crdCheck.DrawItem += DrawThemedComboItem;
 
@@ -349,6 +367,8 @@ public sealed class SettingsForm : Form
         _wolMenu.Text = _work.WolMenuLabel;
         _wakePattern.Text = _work.WakeButtonPattern;
         _probeInterval.Value = Clamp(_work.SessionProbeIntervalSeconds, 5, 600);
+        _powerCheck.SelectedIndex = Math.Max(0, Array.FindIndex(PowerChoices, c => c.Mode == _work.PowerCheck));
+        _powerSeconds.Value = Clamp(_work.PowerCheckSeconds, 15, 3600);
     }
 
     private static decimal Clamp(int v, int min, int max) => Math.Min(max, Math.Max(min, v));
@@ -385,6 +405,14 @@ public sealed class SettingsForm : Form
         _work.WolMenuLabel = string.IsNullOrWhiteSpace(_wolMenu.Text) ? "WOL 기능" : _wolMenu.Text.Trim();
         _work.WakeButtonPattern = string.IsNullOrWhiteSpace(_wakePattern.Text) ? @"^PC\s*켜기$" : _wakePattern.Text.Trim();
         _work.SessionProbeIntervalSeconds = (int)_probeInterval.Value;
+        _work.PowerCheckMode = (_powerCheck.SelectedIndex >= 0 ? PowerChoices[_powerCheck.SelectedIndex].Mode : PowerSource.Auto) switch
+        {
+            PowerSource.Direct => "direct",
+            PowerSource.Vpn => "vpn",
+            PowerSource.Off => "off",
+            _ => "auto",
+        };
+        _work.PowerCheckSeconds = (int)_powerSeconds.Value;
     }
 
     private void OnSave()

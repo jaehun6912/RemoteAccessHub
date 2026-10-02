@@ -578,6 +578,9 @@ internal sealed class SelfTestDriver
         // ================= J-2. 크롬 원격 데스크톱 =================
         await CrdScenariosAsync(s);
 
+        // ================= J-3. PC 전원 상태 배지 =================
+        await PowerScenariosAsync(s);
+
         // ================= L. 화면(UI) =================
         await UiScenariosAsync(mock, s);
 
@@ -1007,6 +1010,74 @@ internal sealed class SelfTestDriver
     private static string Masked(IEnumerable<string> macs) => string.Join(",", macs.Select(InputRules.MaskMac));
 
     private static string Short(string s) => s.Length > 260 ? s[..260] + "…" : s;
+
+    /// <summary>PC 전원 상태 배지: 포트 응답만 보고, 응답이 없다고 꺼졌다고 단정하지 않는지 확인한다.</summary>
+    private async Task PowerScenariosAsync(AppSettings s)
+    {
+        var savedMode = s.PowerCheckMode;
+        var savedNeverOpen = _port.NeverOpen;
+        try
+        {
+            s.PowerCheckMode = "direct";
+            s.PublicHost = "127.0.0.1";
+            s.PublicRdpPort = 33890;
+
+            // 1) 포트가 응답하면 "켜짐"
+            _port.NeverOpen = false;
+            _port.OpenAfterAttempts = 0;
+            await _form.CheckPowerNowAsync();
+            var on = _form.PcPowerStatus;
+            Check("전원 배지: 포트가 응답하면 '켜짐'",
+                on.State == PcPowerState.On && _form.PowerPillText.StartsWith("PC 켜짐") && on.CheckedAt != null,
+                $"state={on.State} pill='{_form.PowerPillText}' detail='{on.Detail}'");
+
+            // 2) 응답이 없으면 "응답 없음"(꺼짐이라고 쓰지 않음)
+            _port.NeverOpen = true;
+            await _form.CheckPowerNowAsync();
+            var off = _form.PcPowerStatus;
+            Check("전원 배지: 응답이 없을 때 '꺼짐'이라고 단정하지 않음",
+                off.State == PcPowerState.NoAnswer && _form.PowerPillText == "PC 응답 없음" && !_form.PowerPillText.Contains("꺼짐") && off.Detail.Contains("포트가 막힘"),
+                $"state={off.State} pill='{_form.PowerPillText}' detail='{off.Detail}'");
+
+            // 3) VPN이 연결되어 있으면 내부 주소로 확인(연결은 스스로 하지 않음)
+            s.PowerCheckMode = "vpn";
+            s.VpnDesktopIp = "127.0.0.1";
+            s.VpnRdpPort = 33890;
+            _vpn.Connected.Clear();
+            var callsBefore = _vpn.ConnectCalls;
+            // VPN 연결 상태는 주기적으로 읽어 두므로 배지가 따라올 때까지 기다린다.
+            await WaitUntilAsync(() => !_form.VpnPillText.Contains("연결됨"), TimeSpan.FromSeconds(15));
+            await _form.CheckPowerNowAsync();
+            var noVpn = _form.PcPowerStatus;
+            _vpn.Connected.Add("HomeVPN");
+            await WaitUntilAsync(() => _form.VpnPillText.Contains("연결됨"), TimeSpan.FromSeconds(10));
+            _port.NeverOpen = false;
+            var targetsBefore = _port.Targets.Count;
+            await _form.CheckPowerNowAsync();
+            var withVpn = _form.PcPowerStatus;
+            Check("전원 배지: VPN 확인은 이미 연결되어 있을 때만 하고, 확인하려고 연결하지 않음",
+                noVpn.State == PcPowerState.Disabled && _vpn.ConnectCalls == callsBefore
+                    && withVpn.State == PcPowerState.On && _port.Targets.Count > targetsBefore,
+                $"vpn없음={noVpn.State} connectCalls+{_vpn.ConnectCalls - callsBefore} vpn있음={withVpn.State}");
+
+            // 4) 끄면 배지도 사라지고 네트워크를 건드리지 않음
+            s.PowerCheckMode = "off";
+            var attempts = _port.Attempts;
+            await _form.CheckPowerNowAsync();
+            Check("전원 배지: 표시하지 않음으로 두면 배지도 없고 포트도 보지 않음",
+                _form.PcPowerStatus.State == PcPowerState.Disabled && _form.PowerPillText == "" && _port.Attempts == attempts,
+                $"state={_form.PcPowerStatus.State} pill='{_form.PowerPillText}' ports+{_port.Attempts - attempts}");
+        }
+        finally
+        {
+            s.PowerCheckMode = savedMode;
+            _port.NeverOpen = savedNeverOpen;
+            // 뒤따르는 화면 검사·화면 저장에서 배지가 실제 사용 모습(켜짐)으로 보이도록 한 번 더 확인한다.
+            _port.NeverOpen = false;
+            _port.OpenAfterAttempts = 0;
+            await _form.CheckPowerNowAsync();
+        }
+    }
 
     /// <summary>크롬 원격 데스크톱: 구글 중계이므로 열어 둔 포트가 없다. 확인하지 않은 것을 확인한 척하지 않는지도 함께 본다.</summary>
     private async Task CrdScenariosAsync(AppSettings s)

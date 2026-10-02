@@ -11,6 +11,19 @@ public enum ConnectMode
     Crd,
 }
 
+/// <summary>윗줄 배지에 PC 전원 상태를 보여 줄 때 어디로 확인할지.</summary>
+public enum PowerSource
+{
+    /// <summary>VPN이 이미 연결되어 있으면 내부 IP로, 아니면 일반 접속 주소로 확인.</summary>
+    Auto,
+    /// <summary>일반 접속 주소·포트로만 확인.</summary>
+    Direct,
+    /// <summary>VPN이 연결되어 있을 때 내부 IP·포트로만 확인(확인하려고 VPN을 연결하지는 않는다).</summary>
+    Vpn,
+    /// <summary>확인하지 않음.</summary>
+    Off,
+}
+
 /// <summary>크롬 원격 데스크톱으로 접속할 때 PC가 켜졌는지 확인하는 방법.</summary>
 public enum CrdBootCheck
 {
@@ -60,6 +73,13 @@ public sealed class AppSettings
     /// <summary>"none" | "direct" | "vpn". 부팅 확인 방법.</summary>
     public string CrdBootCheckMode { get; set; } = "none";
 
+    // --- PC 전원 상태 배지 ---
+    /// <summary>"auto" | "direct" | "vpn" | "off".</summary>
+    public string PowerCheckMode { get; set; } = "auto";
+
+    /// <summary>전원 상태를 다시 확인하는 주기(초).</summary>
+    public int PowerCheckSeconds { get; set; } = 60;
+
     // --- 공통 ---
     public int BootWaitSeconds { get; set; } = 180;
     public bool RdpFullScreen { get; set; } = true;
@@ -91,6 +111,15 @@ public sealed class AppSettings
     public string ConfirmDialogPattern { get; set; } = "PC를 켜시겠습니까";
     public string WakeProgressPattern { get; set; } = "PC를 켜는 중";
     public int SessionProbeIntervalSeconds { get; set; } = 15;
+
+    [JsonIgnore]
+    public PowerSource PowerCheck => (PowerCheckMode ?? "").Trim().ToLowerInvariant() switch
+    {
+        "direct" => PowerSource.Direct,
+        "vpn" => PowerSource.Vpn,
+        "off" => PowerSource.Off,
+        _ => PowerSource.Auto,
+    };
 
     [JsonIgnore]
     public CrdBootCheck CrdCheck => (CrdBootCheckMode ?? "").Trim().ToLowerInvariant() switch
@@ -204,6 +233,8 @@ public sealed class AppSettings
             errors.Add("WOL 대상 MAC 주소 형식이 올바르지 않습니다. 예: 00:11:22:33:44:55");
         try { _ = new System.Text.RegularExpressions.Regex(WakeButtonPattern); }
         catch { errors.Add("PC 켜기 버튼 패턴(정규식)이 올바르지 않습니다."); }
+        if (PowerCheckSeconds is < 15 or > 3600)
+            errors.Add("PC 전원 확인 주기는 15~3600초 사이여야 합니다.");
         if (SessionProbeIntervalSeconds is < 5 or > 600)
             errors.Add("세션 확인 주기는 5~600초 사이여야 합니다.");
         return errors;

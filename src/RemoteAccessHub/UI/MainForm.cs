@@ -30,6 +30,7 @@ public sealed class MainForm : Form
     private readonly IPortProbe _portProbe;
     private readonly IRdpLauncher _rdp;
     private readonly ICrdLauncher _crd;
+    private readonly PowerWatcher _power;
 
     private readonly WebView2 _webView = new();
     private readonly Panel _browserHost = new();
@@ -63,6 +64,7 @@ public sealed class MainForm : Form
     private readonly FlowLayoutPanel _pills = new();
     private readonly StatusPill _routerPill = new();
     private readonly StatusPill _vpnPill = new();
+    private readonly StatusPill _powerPill = new();
     private readonly FlatButton _btnSettings = new();
     private readonly FlatButton _btnMore = new();
     private readonly FlatButton _btnExit = new();
@@ -108,6 +110,10 @@ public sealed class MainForm : Form
     public string WolBootText => _flow.WolBootText;
     public string RouterPillText => _routerPill.Text;
     public string VpnPillText => _vpnPill.Visible ? _vpnPill.Text : "";
+    public string PowerPillText => _powerPill.Visible ? _powerPill.Text : "";
+    public PcPowerStatus PcPowerStatus => _power.Status;
+    /// <summary>자체검사용: 전원 상태를 지금 확인한다.</summary>
+    public Task CheckPowerNowAsync() => _power.CheckNowAsync();
     public int AttentionCount { get; private set; }
     public string WakeConnectButtonText => _btnWakeConnect.Text;
     public bool ConnectButtonsHaveArrow => _btnConnect.ShowArrow || _btnConnect.SplitWidth > 0 || _btnWakeConnect.ShowArrow || _btnWakeConnect.SplitWidth > 0;
@@ -144,6 +150,18 @@ public sealed class MainForm : Form
         _browser = new RouterBrowser(_webView, log, () => _settings);
         _wol = new WolAutomation(_browser, log, () => _settings);
         _connect = new ConnectWorkflow(_vpn, _portProbe, _rdp, _crd, log);
+        // 전원 배지: 설정한 주기로 PC 포트 응답만 확인한다. VPN을 스스로 연결하지 않고, 작업 중에는 쉰다.
+        _power = new PowerWatcher(_portProbe, log, () => _settings,
+            vpnConnected: () => _vpnConnectedCache == true,
+            routerLoggedIn: () => _browser.Session.IsLoggedIn,
+            paused: () => _busy || _exiting);
+        _power.Changed += _ =>
+        {
+            if (IsDisposed) return;
+            // 이미 화면 스레드면 바로 갱신한다(배지가 한 박자 늦게 바뀌지 않도록).
+            if (InvokeRequired) BeginInvoke(RefreshPills);
+            else RefreshPills();
+        };
 
         _cursorGuard = new CursorGuard(this, _browserHost, log);
         Application.AddMessageFilter(_cursorGuard);
@@ -203,9 +221,13 @@ public sealed class MainForm : Form
         _pills.WrapContents = false;
         _pills.AutoSize = false;
         _pills.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        _pills.Controls.Add(_powerPill);
         _pills.Controls.Add(_vpnPill);
         _pills.Controls.Add(_routerPill);
-        foreach (var pill in new[] { _routerPill, _vpnPill })
+        _powerPill.Cursor = Cursors.Hand;
+        _powerPill.Click += (_, _) => _ = _power.CheckNowAsync();
+        _tips.SetToolTip(_powerPill, "PC 전원 상태(눌러서 지금 확인)");
+        foreach (var pill in new[] { _routerPill, _vpnPill, _powerPill })
         {
             pill.Height = L(30);
             pill.Margin = new Padding(L(8), L(3), 0, 0);
@@ -358,7 +380,8 @@ public sealed class MainForm : Form
         _btnExit.Location = new Point(right - _btnExit.Width, L(4));
         _btnMore.Location = new Point(_btnExit.Left - _btnMore.Width - L(8), L(4));
         _btnSettings.Location = new Point(_btnMore.Left - _btnSettings.Width - L(2), L(4));
-        var pillsWidth = _routerPill.Width + (_vpnPill.Visible ? _vpnPill.Width + L(8) : 0) + L(12);
+        var pillsWidth = _routerPill.Width + (_vpnPill.Visible ? _vpnPill.Width + L(8) : 0)
+            + (_powerPill.Visible ? _powerPill.Width + L(8) : 0) + L(12);
         _pills.Size = new Size(pillsWidth, L(40));
         _pills.Location = new Point(_btnSettings.Left - pillsWidth - L(8), L(2));
     }
@@ -492,6 +515,7 @@ public sealed class MainForm : Form
             _settleCts?.Cancel();
             SaveWindowPosition();
             _log.Info("프로그램 종료 (VPN 연결은 그대로 둡니다)");
+            _power.Dispose();
             _mock?.Dispose();
         };
         FormClosed += (_, _) =>
@@ -673,6 +697,19 @@ public sealed class MainForm : Form
             else if (_vpnConnectedCache == false) _vpnPill.Set("VPN 연결 안 됨", p.Muted, Theme.Glyph.Lock);
             else _vpnPill.Set("VPN 확인 전", p.Muted, Theme.Glyph.Lock);
         }
+        var power = _power.Status;
+        _powerPill.Visible = power.State != PcPowerState.Disabled;
+        if (_powerPill.Visible)
+        {
+            var color = power.State switch
+            {
+                PcPowerState.On => p.Success,
+                PcPowerState.Checking => p.Info,
+                _ => p.Muted,
+            };
+            _powerPill.Set(power.PillText, color, Theme.Glyph.Power);
+            _tips.SetToolTip(_powerPill, power.Detail + " (눌러서 지금 확인)");
+        }
         LayoutHeader();
     }
 
@@ -681,6 +718,8 @@ public sealed class MainForm : Form
         _uiTicks++;
         _flow.Tick(DateTimeOffset.Now);
         if (_uiTicks % 5 == 1) PollVpn();
+        // 자체검사는 포트 확인 횟수를 세므로 주기 확인을 끄고 필요한 곳에서 직접 부른다.
+        if (!_options.SelfTest) _power.Tick();
     }
 
     private void PollVpn()
@@ -1089,6 +1128,7 @@ public sealed class MainForm : Form
         if (outcome.Success)
         {
             _log.Info("WOL 완료: " + outcome.Message);
+            _power.CheckSoon(TimeSpan.FromSeconds(20)); // 부팅할 시간을 조금 준 뒤 전원 배지를 갱신
             SetStatus(outcome.RouterStatus == StageStatus.Done
                     ? "공유기가 PC 켜기 요청을 처리했습니다. 부팅 여부는 [PC 접속]에서 RDP 응답으로 확인합니다."
                     : outcome.Message,
@@ -1147,6 +1187,7 @@ public sealed class MainForm : Form
         await Task.Yield();
         _flow.OnConnectOutcome(outcome, DateTimeOffset.Now);
         PollVpn();
+        _power.CheckSoon();
         if (outcome.Success)
         {
             SetStatus("[PC 접속] " + outcome.Message, BannerKind.Success);
