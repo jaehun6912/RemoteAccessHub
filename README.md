@@ -44,9 +44,11 @@
 
 ## 설치와 실행
 
-직접 빌드하거나 GitHub Actions의 빌드 결과물(서명 없음)을 받아 `RemoteAccessHub.exe`를 실행합니다. 처음 실행하면 시작 설정 창이 열립니다.
+설치 파일(`RemoteAccessHub-setup-<버전>.exe`)을 받아 실행하면 사용자 폴더에 설치되고 시작 메뉴 바로 가기와 제거 항목이 만들어집니다. 관리자 권한은 필요 없습니다. 압축 파일이나 직접 빌드한 `RemoteAccessHub.exe`를 그냥 실행해도 됩니다. 처음 실행하면 시작 설정 창이 열립니다.
 
-> **서명되지 않은 실행 파일입니다.** Windows SmartScreen이나 Smart App Control이 실행을 막을 수 있습니다. 보안 기능을 끄는 방법은 안내하지 않습니다. 이유와 신뢰된 서명에 필요한 것은 [docs/코드서명과배포.md](docs/코드서명과배포.md)를 보세요.
+설치 파일은 `.\build.ps1 -Publish -Installer`로 직접 만들 수 있습니다([docs/빌드방법.md](docs/빌드방법.md)).
+
+> **서명되지 않은 실행 파일입니다(설치 파일도 마찬가지).** Windows SmartScreen이나 Smart App Control이 실행을 막을 수 있습니다. 보안 기능을 끄는 방법은 안내하지 않습니다. 이유와 신뢰된 서명에 필요한 것은 [docs/코드서명과배포.md](docs/코드서명과배포.md)를 보세요.
 
 ## 빌드
 
@@ -55,6 +57,7 @@
 ```powershell
 .\build.ps1                    # 복원 + 빌드(Release) + 단위 검사
 .\build.ps1 -Publish           # + artifacts\publish 에 실행 패키지와 zip 생성
+.\build.ps1 -Publish -Installer # + artifacts 에 설치 파일(setup.exe) 생성, Inno Setup 6 필요
 .\build.ps1 -SelfTest          # + 모의 공유기 통합 자체검사(창과 WebView2가 잠시 뜸)
 ```
 
