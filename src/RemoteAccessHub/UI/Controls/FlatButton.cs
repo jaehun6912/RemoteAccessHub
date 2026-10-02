@@ -21,7 +21,7 @@ public sealed class FlatButton : Button
     private ButtonVariant _variant = ButtonVariant.Secondary;
     private string _glyph = "";
     private Image? _glyphImage;
-    private bool _attention;
+    private double _attention;
     private int _splitWidth;
 
     public event EventHandler? DropDownClick;
@@ -33,9 +33,21 @@ public sealed class FlatButton : Button
     [DefaultValue("")]
     public string Glyph { get => _glyph; set { _glyph = value ?? ""; Invalidate(); } }
 
-    /// <summary>눈에 띄게 강조할 차례(깜빡임의 '켜진' 쪽). 켜면 주 버튼처럼 칠한다.</summary>
-    [DefaultValue(false)]
-    public bool Attention { get => _attention; set { if (_attention == value) return; _attention = value; Invalidate(); } }
+    /// <summary>
+    /// 강조 정도(0 = 평소, 1 = 주 버튼 색). 서서히 밝아졌다 어두워지도록 사이값을 받는다.
+    /// </summary>
+    [DefaultValue(0.0)]
+    public double AttentionLevel
+    {
+        get => _attention;
+        set
+        {
+            var v = Math.Clamp(value, 0, 1);
+            if (Math.Abs(_attention - v) < 0.01) return;
+            _attention = v;
+            Invalidate();
+        }
+    }
 
     /// <summary>글리프 대신 쓸 그림 아이콘(없으면 글리프). 그림은 버튼이 소유하지 않는다.</summary>
     [DefaultValue(null)]
@@ -118,9 +130,7 @@ public sealed class FlatButton : Button
         Drawing.Smooth(g);
 
         Color fill, border, text;
-        // 깜빡임의 '켜진' 쪽: 모양은 그대로 두고 색만 주 버튼처럼 바꾼다.
-        var variant = _attention && Enabled ? ButtonVariant.Primary : _variant;
-        switch (variant)
+        switch (_variant)
         {
             case ButtonVariant.Primary:
                 fill = !Enabled ? p.SurfaceAlt : _pressed ? p.AccentPressed : _hover ? p.AccentHover : p.Accent;
@@ -142,6 +152,15 @@ public sealed class FlatButton : Button
                 border = p.Border;
                 text = Enabled ? p.Text : p.Muted;
                 break;
+        }
+
+        // 깜빡임: 모양은 그대로 두고 색만 주 버튼 쪽으로 서서히 옮긴다.
+        if (_attention > 0 && Enabled)
+        {
+            fill = Theme.Blend(fill, p.Accent, _attention);
+            border = Theme.Blend(border, p.Accent, _attention);
+            // 중간 색 위에서도 글자가 읽히도록 두 글자색 중 대비가 나은 쪽을 쓴다.
+            text = Theme.Contrast(p.OnAccent, fill) > Theme.Contrast(p.Text, fill) ? p.OnAccent : p.Text;
         }
 
         var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);

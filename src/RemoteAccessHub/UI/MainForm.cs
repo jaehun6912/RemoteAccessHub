@@ -31,8 +31,11 @@ public sealed class MainForm : Form
     private readonly IRdpLauncher _rdp;
     private readonly ICrdLauncher _crd;
     private readonly PowerWatcher _power;
-    /// <summary>PC가 켜져 있을 때 [PC 접속]을 천천히 깜빡이는 타이머(한 쪽 상태를 0.9초씩).</summary>
-    private readonly System.Windows.Forms.Timer _blinkTimer = new() { Interval = 900 };
+    /// <summary>PC가 켜져 있을 때 [PC 접속]을 서서히 밝아졌다 어두워지게 하는 타이머.</summary>
+    private readonly System.Windows.Forms.Timer _blinkTimer = new() { Interval = 40 };
+    private readonly System.Diagnostics.Stopwatch _blinkClock = new();
+    /// <summary>한 번 밝아졌다 어두워지는 데 걸리는 시간.</summary>
+    private static readonly TimeSpan BlinkPeriod = TimeSpan.FromSeconds(2.2);
 
     private readonly WebView2 _webView = new();
     private readonly Panel _browserHost = new();
@@ -106,7 +109,8 @@ public sealed class MainForm : Form
     public bool ConnectEnabled => _btnConnect.Enabled;
     /// <summary>[PC 접속]이 지금 깜빡이는 중인지(자체검사용).</summary>
     public bool ConnectBlinking => _blinkTimer.Enabled;
-    public bool ConnectHighlighted => _btnConnect.Attention;
+    public double ConnectHighlight => _btnConnect.AttentionLevel;
+    public bool ConnectHighlighted => _btnConnect.AttentionLevel > 0.5;
     public bool IsBusy => _busy;
     public string StatusText => _banner.Text;
     public BannerKind StatusKind => _banner.Kind;
@@ -266,7 +270,9 @@ public sealed class MainForm : Form
         _btnConnect.Text = "PC 접속";
         _btnConnect.Glyph = Theme.Glyph.Connect;
         _btnConnect.Click += (_, _) => ShowModePopup(wakeFirst: false);
-        _blinkTimer.Tick += (_, _) => _btnConnect.Attention = !_btnConnect.Attention;
+        // 사인 곡선이라 양 끝에서 머물고 가운데에서 빨라져 '숨 쉬듯' 보인다.
+        _blinkTimer.Tick += (_, _) =>
+            _btnConnect.AttentionLevel = (1 - Math.Cos(2 * Math.PI * (_blinkClock.Elapsed.TotalSeconds / BlinkPeriod.TotalSeconds))) / 2;
         _tips.SetToolTip(_btnConnect, "이미 켜진 PC에 바로 접속합니다. 누르면 일반/VPN 접속을 고릅니다. (Ctrl+Shift+Enter)");
 
         _btnCancel.Text = "취소";
@@ -681,11 +687,16 @@ public sealed class MainForm : Form
     {
         var blink = ActionGate.ShouldBlinkConnect(_settings.BlinkConnectWhenPcOn, _power.Status.State, _btnConnect.Enabled, _busy, _exiting);
         if (blink == _blinkTimer.Enabled) return;
-        if (blink) _blinkTimer.Start();
+        if (blink)
+        {
+            _blinkClock.Restart(); // 늘 어두운 쪽에서 시작한다
+            _blinkTimer.Start();
+        }
         else
         {
             _blinkTimer.Stop();
-            _btnConnect.Attention = false;
+            _blinkClock.Reset();
+            _btnConnect.AttentionLevel = 0;
         }
     }
 
