@@ -105,7 +105,7 @@ public sealed class FlowTracker
                 Login.Set(StepState.Done, _confirmedAt is { } t ? $"로그인됨 · {Hm(t)}" : "로그인됨");
                 break;
             case SessionState.LoggedOut:
-                Login.Set(StepState.Active, "공유기 화면에서 로그인");
+                Login.Set(StepState.Active, "공유기 창에서 로그인");
                 break;
             default:
                 Login.Set(StepState.Pending, "확인 전");

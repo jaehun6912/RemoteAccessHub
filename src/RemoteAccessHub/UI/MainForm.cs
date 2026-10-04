@@ -11,14 +11,16 @@ namespace RemoteAccessHub.UI;
 
 /// <summary>
 /// 메인 창.
-/// 위: 제목과 상태 배지 → 4단계 표시 → 현재 안내 → 동작 버튼. 아래: 자세한 기록(접기 가능) → 공유기 화면(WebView2).
-/// 공유기 화면은 "접기"에서도 컨트롤을 숨기지 않고 표시 영역만 0으로 줄여 로그인 세션과 화면 상태를 유지한다.
+/// 제목과 상태 배지 → 4단계 표시 → 현재 안내 → 동작 버튼 → 자세한 기록(접기 가능).
+/// 공유기 화면(WebView2)은 별도 창(RouterWindow)에 있고, 닫아도 컨트롤을 버리지 않고 숨기기만 해 로그인 세션을 유지한다.
 /// 자동화 동작(세션 판정·WOL·접속)은 Router/Services 계층에 있고 이 창은 상태 표시와 사용자 입력만 맡는다.
 /// </summary>
 public sealed class MainForm : Form
 {
     private const int LogicalBrowserWidth = 1180;
     private const int LogicalBrowserHeight = 720;
+    /// <summary>메인 창 너비(공유기 화면이 빠져 더 좁아도 된다).</summary>
+    private const int LogicalMainWidth = 1180;
     private const int LogicalLogHeight = 150;
 
     private readonly LaunchOptions _options;
@@ -38,7 +40,8 @@ public sealed class MainForm : Form
     private static readonly TimeSpan BlinkPeriod = TimeSpan.FromSeconds(2.2);
 
     private readonly WebView2 _webView = new();
-    private readonly Panel _browserHost = new();
+    /// <summary>공유기 로그인·관리 화면은 메인 창 안이 아니라 별도 창에 띄운다.</summary>
+    private readonly RouterWindow _routerWindow;
     private readonly RouterBrowser _browser;
     private readonly WolAutomation _wol;
     private readonly ConnectWorkflow _connect;
@@ -86,7 +89,7 @@ public sealed class MainForm : Form
     private readonly Panel _logPanel = new();
     private readonly TextBox _txtLog = new();
     private readonly ContextMenuStrip _moreMenu = new();
-    private readonly ToolStripMenuItem _miReopen = new("공유기 화면 다시 열기");
+    private readonly ToolStripMenuItem _miReopen = new("공유기 창 다시 열기");
     private readonly ToolStripMenuItem _miWakeHere = new("현재 화면에서 PC 켜기");
     private readonly ToolStripMenuItem _miDiag = new("진단 내보내기...");
     private readonly ToolStripMenuItem _miLogs = new("기록 폴더 열기");
@@ -102,7 +105,7 @@ public sealed class MainForm : Form
     public AppSettings Settings => _settings;
     public MockRouterServer? Mock => _mock;
     public FlowTracker Flow => _flow;
-    public bool IsBrowserExpanded => _browserExpanded;
+    public bool IsBrowserExpanded => _routerWindow.Visible;
     public bool IsLogVisible => _logVisible;
     public bool WakeEnabled => _btnWake.Enabled;
     public bool WakeConnectEnabled => _btnWakeConnect.Enabled;
@@ -156,6 +159,10 @@ public sealed class MainForm : Form
         _rdp = rdp ?? new RdpLauncher(log);
         _crd = crd ?? new CrdLauncher(log);
 
+        _routerWindow = new RouterWindow(_webView,
+            new Size(L(LogicalBrowserWidth), L(LogicalBrowserHeight)),
+            new Size(L(900), L(560)));
+        _routerWindow.VisibleChanged += (_, _) => SafeInvoke(RefreshUi);
         _browser = new RouterBrowser(_webView, log, () => _settings);
         _wol = new WolAutomation(_browser, log, () => _settings);
         _connect = new ConnectWorkflow(_vpn, _portProbe, _rdp, _crd, log);
@@ -172,7 +179,7 @@ public sealed class MainForm : Form
             else RefreshPills();
         };
 
-        _cursorGuard = new CursorGuard(this, _browserHost, log);
+        _cursorGuard = new CursorGuard(this, _routerWindow.BrowserHost, log);
         Application.AddMessageFilter(_cursorGuard);
         Theme.Apply(Theme.ParseMode(_settings.Theme));
         BuildUi();
@@ -224,7 +231,7 @@ public sealed class MainForm : Form
         _btnSettings.Click += (_, _) => OpenSettings();
         _btnMore.Click += (_, _) => _moreMenu.Show(_btnMore, new Point(_btnMore.Width - _moreMenu.PreferredSize.Width, _btnMore.Height));
         _tips.SetToolTip(_btnSettings, "설정");
-        _tips.SetToolTip(_btnMore, "공유기 화면 다시 열기 · 현재 화면에서 PC 켜기 · 진단 · 테마");
+        _tips.SetToolTip(_btnMore, "공유기 창 다시 열기 · 현재 화면에서 PC 켜기 · 진단 · 테마");
 
         _pills.FlowDirection = FlowDirection.RightToLeft;
         _pills.WrapContents = false;
@@ -283,7 +290,7 @@ public sealed class MainForm : Form
 
         _btnToggle.Variant = ButtonVariant.Ghost;
         _btnToggle.Click += (_, _) => SetBrowserExpanded(!_browserExpanded);
-        _tips.SetToolTip(_btnToggle, "공유기 화면을 펼치거나 접습니다. 접어도 로그인은 유지됩니다. (Ctrl+B)");
+        _tips.SetToolTip(_btnToggle, "공유기 화면 창을 띄우거나 닫습니다. 닫아도 로그인은 유지됩니다. (Ctrl+B)");
 
         _btnLog.Variant = ButtonVariant.Ghost;
         _btnLog.Glyph = Theme.Glyph.Log;
@@ -314,26 +321,11 @@ public sealed class MainForm : Form
         _txtLog.WordWrap = true;
         _logPanel.Controls.Add(_txtLog);
 
-        // --- 공유기 화면
-        _browserHost.Dock = DockStyle.Fill;
-        _webView.Location = new Point(0, 0);
-        _webView.Size = new Size(L(LogicalBrowserWidth), L(LogicalBrowserHeight));
-        _browserHost.Controls.Add(_webView);
-        _browserHost.Resize += (_, _) =>
-        {
-            // 접힌 동안에도 WebView 크기(=공유기 화면의 좌표계)는 유지한다.
-            if (_browserHost.Height > 0)
-                _webView.Size = new Size(Math.Max(L(1000), _browserHost.Width), Math.Max(L(LogicalBrowserHeight), _browserHost.Height));
-            else
-                _webView.Width = Math.Max(L(1000), _browserHost.Width);
-        };
-
-        Controls.Add(_browserHost);
         Controls.Add(_logPanel);
         Controls.Add(_topArea);
 
         ApplyLayoutMetrics();
-        ClientSize = new Size(L(LogicalBrowserWidth), ClientSize.Height);
+        ClientSize = new Size(L(LogicalMainWidth), ClientSize.Height);
         ApplyWindowHeight();
         RestoreWindowPosition();
     }
@@ -356,31 +348,30 @@ public sealed class MainForm : Form
         _logPanel.Visible = _logVisible;
     }
 
-    /// <summary>공유기 화면을 뺀 높이(위쪽 묶음 + 보이는 경우 기록 창).</summary>
+    /// <summary>메인 창 내용 높이(위쪽 묶음 + 보이는 경우 기록 창).</summary>
     private int ContentHeight => _topArea.Height + (_logVisible ? _logPanel.Height : 0);
 
     /// <summary>
     /// 창 높이를 현재 표시 상태에 맞춘다.
-    /// 접힌 동안에는 공유기 화면 영역을 정확히 0으로 두고 세로 크기를 고정한다.
-    /// (최소 창 높이나 사용자가 창을 늘려서 공유기 화면이 일부 드러나지 않도록)
+    /// 공유기 화면이 별도 창으로 빠져 메인 창은 늘 내용 높이에 고정된다.
     /// </summary>
     private void ApplyWindowHeight()
     {
-        if (!_browserExpanded && WindowState == FormWindowState.Maximized) WindowState = FormWindowState.Normal;
+        if (WindowState == FormWindowState.Maximized) WindowState = FormWindowState.Normal;
         var frame = Height - ClientSize.Height;
         var contentWindowHeight = ContentHeight + frame;
         SuspendLayout();
         // 크기 제한을 먼저 풀어야 새 높이가 적용된다.
         MaximumSize = Size.Empty;
         MinimumSize = new Size(L(1040), contentWindowHeight);
-        ClientSize = new Size(ClientSize.Width, ContentHeight + (_browserExpanded ? L(LogicalBrowserHeight) : 0));
+        ClientSize = new Size(ClientSize.Width, ContentHeight);
         // 너비는 제한하지 않는다(0을 넣으면 WinForms가 최소 창 너비로 고정한다).
-        if (!_browserExpanded) MaximumSize = new Size(short.MaxValue, contentWindowHeight);
+        MaximumSize = new Size(short.MaxValue, contentWindowHeight);
         ResumeLayout(true);
     }
 
     /// <summary>자체검사용: 공유기 화면이 실제로 차지하는 높이.</summary>
-    public int BrowserAreaHeight => _browserHost.Height;
+    public int BrowserAreaHeight => _routerWindow.Visible ? _routerWindow.ClientSize.Height : 0;
     internal CursorGuard CursorGuard => _cursorGuard;
     internal IntPtr ActionsHandle => _actions.Handle;
     internal IntPtr BrowserControlHandle => _webView.Handle;
@@ -529,6 +520,7 @@ public sealed class MainForm : Form
             _log.Info("프로그램 종료 (VPN 연결은 그대로 둡니다)");
             _blinkTimer.Stop();
             _power.Dispose();
+            _routerWindow.CloseForReal();
             _mock?.Dispose();
         };
         FormClosed += (_, _) =>
@@ -596,7 +588,7 @@ public sealed class MainForm : Form
         _actions.BackColor = p.Background;
         _pills.BackColor = p.Background;
         _logPanel.BackColor = p.Background;
-        _browserHost.BackColor = p.Background;
+        _routerWindow.ApplyTheme();
         foreach (Control c in _topArea.Controls) if (c.Tag as string == "spacer") c.BackColor = p.Background;
         _title.ForeColor = p.Text;
         _txtLog.BackColor = p.LogBackground;
@@ -671,8 +663,8 @@ public sealed class MainForm : Form
         _miReopen.Enabled = idle;
         _miSetup.Enabled = idle;
         _btnCancel.Visible = _busy && !_exiting;
-        _btnToggle.Text = _browserExpanded ? "공유기 화면 접기" : "공유기 화면";
-        _btnToggle.Glyph = _browserExpanded ? Theme.Glyph.ChevronUp : Theme.Glyph.ChevronDown;
+        _btnToggle.Text = _routerWindow.Visible ? "공유기 창 닫기" : "공유기 화면";
+        _btnToggle.Glyph = _routerWindow.Visible ? Theme.Glyph.Cancel : Theme.Glyph.Router;
         _btnLog.Text = _logVisible ? "기록 숨기기" : "기록";
         RefreshPills();
         LayoutActions();
@@ -789,6 +781,8 @@ public sealed class MainForm : Form
             }
 
             SetStatus("내장 브라우저를 준비하는 중...", BannerKind.Progress);
+            // 공유기 화면은 별도 창에 있다. 창을 먼저 띄워야 핸들이 생겨 브라우저를 준비할 수 있다.
+            SetBrowserExpanded(true);
             await _browser.InitializeAsync(CancellationToken.None);
             _browser.ScriptDialogHandler = OnScriptDialog;
             _browser.Session.StateChanged += (o, n, r) => SafeInvoke(() => OnSessionStateChanged(o, n, r));
@@ -910,13 +904,13 @@ public sealed class MainForm : Form
             if (oldState == SessionState.LoggedIn)
             {
                 _log.Warn("공유기 세션 만료/로그아웃 감지 → [PC 켜기] 비활성화 (" + reason + ")");
-                SetStatus("공유기 세션이 만료되었습니다. 아래 공유기 화면에서 다시 로그인하세요.", BannerKind.Warning);
+                SetStatus("공유기 세션이 만료되었습니다. 공유기 화면 창에서 다시 로그인하세요.", BannerKind.Warning);
                 SetBrowserExpanded(true);
                 NotifyAttention();
             }
             else
             {
-                SetStatus("아래 공유기 화면에서 아이디·비밀번호·보안문자를 입력해 로그인하세요.", BannerKind.Info);
+                SetStatus("공유기 화면 창에서 아이디·비밀번호·보안문자를 입력해 로그인하세요. 로그인이 확인되면 창은 저절로 닫힙니다.", BannerKind.Info);
             }
         }
     }
@@ -966,7 +960,7 @@ public sealed class MainForm : Form
             else if (nav.Status == NavStatus.Failed)
             {
                 if (!_busy) SetBrowserExpanded(true);
-                SetStatus("로그인은 확인됐지만 관리 화면을 확인하지 못했습니다. 필요하면 공유기 화면에서 [관리도구]를 누르세요.", BannerKind.Warning);
+                SetStatus("로그인은 확인됐지만 관리 화면을 확인하지 못했습니다. 필요하면 공유기 화면 창에서 [관리도구]를 누르세요.", BannerKind.Warning);
                 _log.Warn("관리 화면 확인 실패: " + nav.Message);
             }
             RefreshUi();
@@ -983,7 +977,7 @@ public sealed class MainForm : Form
             if (!_busy && !_exiting && _browser.Session.IsLoggedIn)
             {
                 SetBrowserExpanded(true);
-                SetStatus("로그인은 확인됐지만 관리 화면을 준비하지 못했습니다. 필요하면 공유기 화면에서 [관리도구]를 누르세요.", BannerKind.Warning);
+                SetStatus("로그인은 확인됐지만 관리 화면을 준비하지 못했습니다. 필요하면 공유기 화면 창에서 [관리도구]를 누르세요.", BannerKind.Warning);
             }
             return null;
         }
@@ -1037,7 +1031,7 @@ public sealed class MainForm : Form
         await Task.Delay(300);
         await ProbeSessionNowAsync();
         if (_browser.Session.State != SessionState.LoggedIn)
-            SetStatus("아래 공유기 화면에서 아이디·비밀번호·보안문자를 입력해 로그인하세요.", BannerKind.Info);
+            SetStatus("공유기 화면 창에서 아이디·비밀번호·보안문자를 입력해 로그인하세요. 로그인이 확인되면 창은 저절로 닫힙니다.", BannerKind.Info);
         // 로그인 화면에서도 상태 판독을 위해 접근성 트리를 켜 둔다(입력은 사용자가 직접).
         _ = _browser.EnsureSemanticsAsync(TimeSpan.FromSeconds(20), CancellationToken.None);
     }
@@ -1046,17 +1040,22 @@ public sealed class MainForm : Form
     {
         if (_browserExpanded == expanded && _initDone) return;
         _browserExpanded = expanded;
-        // 접을 때 입력 초점이 공유기 화면에 남아 있으면 보이지 않는 페이지로 키 입력이 가고 단축키도 먹지 않으므로 옮긴다.
-        if (!expanded && _browserHost.ContainsFocus && !_actions.SelectNextControl(null, true, true, false, true))
+        if (expanded)
         {
-            ActiveControl = null;
-            Focus();
+            _routerWindow.ShowFor(this, _browser.Session.IsLoggedIn ? "공유기 관리 화면" : "공유기 로그인");
         }
-        ApplyWindowHeight();
-        // 공유기 화면에서 입력하다 접으면 숨겨진 커서가 메인 창 위에 남을 수 있다(CursorGuard 설명 참고).
-        if (!expanded) _cursorGuard.RestoreIfHiddenAtPointer("공유기 화면 접음");
+        else
+        {
+            // 숨길 때 입력 초점이 공유기 화면에 남아 있으면 보이지 않는 페이지로 키 입력이 가므로 메인 창으로 옮긴다.
+            var hadFocus = _routerWindow.ContainsFocus;
+            _routerWindow.Hide();
+            if (hadFocus && !_actions.SelectNextControl(null, true, true, false, true)) ActiveControl = null;
+            if (hadFocus && !_exiting) Activate();
+            // 공유기 화면에서 입력하다 닫으면 숨겨진 커서가 메인 창 위에 남을 수 있다(CursorGuard 설명 참고).
+            _cursorGuard.RestoreIfHiddenAtPointer("공유기 창 닫음");
+        }
         RefreshUi();
-        _log.Debug(expanded ? "공유기 화면 펼침" : "공유기 화면 접음(세션·브라우저 상태 유지)");
+        _log.Debug(expanded ? "공유기 창 띄움" : "공유기 창 숨김(세션·브라우저 상태 유지)");
     }
 
     // ================================================================== 작업
@@ -1128,7 +1127,7 @@ public sealed class MainForm : Form
         }
         if (!_browser.Session.IsLoggedIn)
         {
-            const string msg = "공유기 로그인이 확인되지 않았습니다. 아래 공유기 화면에서 먼저 로그인하세요.";
+            const string msg = "공유기 로그인이 확인되지 않았습니다. 공유기 화면 창에서 먼저 로그인하세요.";
             SetStatus(msg, BannerKind.Warning);
             SetBrowserExpanded(true);
             return WolOutcome.Fail(WolStep.SessionCheck, msg);
@@ -1174,7 +1173,7 @@ public sealed class MainForm : Form
         {
             var cancelled = !outcome.RequestAborted && outcome.Message.Contains("취소되었습니다", StringComparison.Ordinal);
             _log.Warn("WOL 실패(" + StepName(outcome.LastStep) + "): " + outcome.Message);
-            SetStatus(cancelled ? outcome.Message : outcome.Message + " 공유기 화면을 펼쳐 두었으니 필요하면 직접 [PC 켜기]를 누르세요.",
+            SetStatus(cancelled ? outcome.Message : outcome.Message + " 공유기 화면 창을 띄워 두었으니 필요하면 직접 [PC 켜기]를 누르세요.",
                 cancelled || outcome.RequestAborted ? BannerKind.Warning : BannerKind.Error);
             if (!cancelled && outcome.LastStep is WolStep.Match or WolStep.NavigateToWol or WolStep.Confirm or WolStep.RouterResponse or WolStep.SessionCheck)
                 SetBrowserExpanded(true);

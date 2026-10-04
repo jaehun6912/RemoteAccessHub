@@ -97,7 +97,7 @@ public sealed class WolAutomation
         if (sd.Result == SessionProbeResult.Unauthenticated)
         {
             Stage(WolStep.SessionCheck, StageStatus.Failed, "세션이 만료되었거나 로그인되지 않았습니다.");
-            return WolOutcome.Fail(WolStep.SessionCheck, "공유기 로그인 세션이 유효하지 않습니다. 공유기 화면을 펼쳐 다시 로그인하세요.");
+            return WolOutcome.Fail(WolStep.SessionCheck, "공유기 로그인 세션이 유효하지 않습니다. 공유기 화면 창에서 다시 로그인하세요.");
         }
         if (sd.Result == SessionProbeResult.Unavailable)
         {
@@ -304,16 +304,16 @@ public sealed class WolAutomation
                     }
                     else
                     {
-                        // 자동으로 닫지 못했을 때만 화면을 펼쳐 사용자에게 맡긴다.
+                        // 자동으로 닫지 못했을 때만 창을 띄워 사용자에게 맡긴다.
                         if (DialogAppeared != null) await DialogAppeared();
-                        Stage(WolStep.Confirm, StageStatus.Running, "확인창의 [확인]을 자동으로 누르지 못했습니다(" + how + "). 펼쳐진 화면에서 [확인]을 누르세요.");
+                        Stage(WolStep.Confirm, StageStatus.Running, "확인창의 [확인]을 자동으로 누르지 못했습니다(" + how + "). 공유기 화면 창에서 [확인]을 누르세요.");
                         manualDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(120);
                     }
                 }
                 else
                 {
                     if (DialogAppeared != null) await DialogAppeared();
-                    Stage(WolStep.Confirm, StageStatus.Running, "공유기가 확인창을 표시했습니다. 펼쳐진 화면에서 [확인]을 누르세요.");
+                    Stage(WolStep.Confirm, StageStatus.Running, "공유기가 확인창을 표시했습니다. 공유기 화면 창에서 [확인]을 누르세요.");
                 }
             }
 
@@ -336,7 +336,7 @@ public sealed class WolAutomation
         }
         Stage(WolStep.Confirm, StageStatus.Unknown, "확인창/응답 관찰 안 됨");
         Stage(WolStep.RouterResponse, StageStatus.Unknown, "클릭 후 공유기 반응을 확인하지 못했습니다.");
-        return new WolOutcome(false, WolStep.RouterResponse, "버튼을 클릭했지만 확인창도 공유기 API 응답도 관찰되지 않았습니다. 공유기 화면을 펼쳐 직접 [PC 켜기]를 눌러 보세요.", true, StageStatus.Unknown, match);
+        return new WolOutcome(false, WolStep.RouterResponse, "버튼을 클릭했지만 확인창도 공유기 API 응답도 관찰되지 않았습니다. 공유기 화면 창에서 직접 [PC 켜기]를 눌러 보세요.", true, StageStatus.Unknown, match);
     }
 
     /// <summary>

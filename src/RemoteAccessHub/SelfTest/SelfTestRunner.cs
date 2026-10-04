@@ -212,7 +212,7 @@ internal sealed class SelfTestDriver
         Check("로그인 전 PC 켜기 비활성화", !_form.WakeEnabled, "WakeEnabled=" + _form.WakeEnabled);
         Check("UI: 로그인 전 [PC 켜고 접속] 비활성화·단계 표시 '로그인'", !_form.WakeConnectEnabled && _form.ConnectEnabled && _form.Flow.Login.State == UI.StepState.Active && _form.RouterPillText.Contains("로그인 필요"),
             $"wakeConnect={_form.WakeConnectEnabled} connect={_form.ConnectEnabled} login={_form.Flow.Login} pill='{_form.RouterPillText}'");
-        Check("로그인 전 화면 펼침", _form.IsBrowserExpanded, "expanded=" + _form.IsBrowserExpanded);
+        Check("로그인 전 공유기 창 띄워짐", _form.IsBrowserExpanded, "expanded=" + _form.IsBrowserExpanded);
         await _form.Browser.EnsureSemanticsAsync(TimeSpan.FromSeconds(5), _ct);
         var k0 = await KindAsync();
         Check("로그인 화면 판정", k0 == RouterPageKind.Login, "page=" + k0);
@@ -225,7 +225,7 @@ internal sealed class SelfTestDriver
         var waitingUser = await WaitUntilAsync(() => _form.StatusText.Contains("관리도구", StringComparison.Ordinal), TimeSpan.FromSeconds(15));
         await Task.Delay(1500);
         var kSel = await KindAsync();
-        Check("선택 화면에서는 공유기 화면을 접지 않음", waitingUser && _form.IsBrowserExpanded && kSel == RouterPageKind.ModeSelect,
+        Check("선택 화면에서는 공유기 창을 닫지 않음", waitingUser && _form.IsBrowserExpanded && kSel == RouterPageKind.ModeSelect,
             $"page={kSel} expanded={_form.IsBrowserExpanded} status='{_form.StatusText}'");
         var popupWhileSelect = _form.ShowModePopup(wakeFirst: false);
         popupWhileSelect?.Close();
@@ -284,7 +284,7 @@ internal sealed class SelfTestDriver
         var collapsedEarly = await WaitUntilAsync(() => !_form.IsBrowserExpanded, TimeSpan.FromSeconds(3));
         var areaEarly = _form.BrowserAreaHeight;
         var stEarly = await MockState();
-        Check("로그인 확인 즉시 공유기 화면 접힘([관리도구] 선택 전, 화면 영역 0)", collapsedEarly && areaEarly == 0 && stEarly.Contains("\"view\":\"modeSelect\""),
+        Check("로그인 확인 즉시 공유기 창 닫힘([관리도구] 선택 전)", collapsedEarly && areaEarly == 0 && stEarly.Contains("\"view\":\"modeSelect\""),
             $"expanded={_form.IsBrowserExpanded} area={areaEarly} state={Short(stEarly)}");
         Check("UI: [관리도구] 자동 선택 중에는 세 버튼 비활성·배지 '준비 중'·1단계 '관리 화면 준비 중'",
             !_form.WakeEnabled && !_form.WakeConnectEnabled && !_form.ConnectEnabled && _form.IsPreparingAdmin
@@ -303,17 +303,17 @@ internal sealed class SelfTestDriver
         // ================= C. 접힌 상태 유지 =================
         _form.SetBrowserExpanded(false);
         for (var i = 0; i < 3; i++) { await _form.ProbeSessionNowAsync(); await Task.Delay(300); }
-        Check("접힌 상태에서 세션 확인 반복 후 유지", _form.Browser.Session.IsLoggedIn && _form.WakeEnabled && !_form.IsBrowserExpanded,
+        Check("공유기 창을 닫은 뒤에도 세션 확인 반복 후 유지", _form.Browser.Session.IsLoggedIn && _form.WakeEnabled && !_form.IsBrowserExpanded,
             $"state={_form.Browser.Session.State} wake={_form.WakeEnabled} expanded={_form.IsBrowserExpanded}");
         // Flutter는 화면 갱신(requestAnimationFrame)으로 버튼·접근성 트리를 그리므로, 영역이 0이어도 페이지가 멈추지 않아야 한다.
         var frame = await Js("new Promise(function(r){var done=false;var t=setTimeout(function(){if(!done){done=true;r(document.visibilityState+':timeout');}},2000);" +
                              "requestAnimationFrame(function(){requestAnimationFrame(function(){if(!done){done=true;clearTimeout(t);r(document.visibilityState+':raf');}});});})");
-        Check("접힌 상태(화면 영역 0)에서도 페이지 표시·화면 갱신 계속", _form.BrowserAreaHeight == 0 && frame == "visible:raf",
+        Check("공유기 창을 닫아도 페이지 표시·화면 갱신 계속", _form.BrowserAreaHeight == 0 && frame == "visible:raf",
             $"area={_form.BrowserAreaHeight} page={frame}");
         var hLocked = _form.Height;
         _form.Height = hLocked + 200;
         await Task.Delay(200);
-        Check("접힌 상태에서는 창을 늘려도 공유기 화면이 드러나지 않음", _form.Height == hLocked && _form.BrowserAreaHeight == 0,
+        Check("공유기 창을 닫으면 메인 창 높이가 고정됨", _form.Height == hLocked && _form.BrowserAreaHeight == 0,
             $"height {hLocked}→{_form.Height} area={_form.BrowserAreaHeight}");
         await SetMock("{hideSemantics:true}");
         await Task.Delay(300);
@@ -331,7 +331,7 @@ internal sealed class SelfTestDriver
         var oExp = await _form.RunWakeAsync(skipNavigation: false);
         Check("세션 만료 시 PC 켜기 거부(클릭 없음)", !oExp.Success && oExp.LastStep == WolStep.SessionCheck && mock.Signals.Count == 0,
             $"step={oExp.LastStep} signals={mock.Signals.Count} msg={oExp.Message}");
-        Check("세션 만료 후 버튼 비활성화·화면 펼침", !_form.WakeEnabled && _form.IsBrowserExpanded && _form.Browser.Session.State == SessionState.LoggedOut,
+        Check("세션 만료 후 버튼 비활성화·공유기 창 띄움", !_form.WakeEnabled && _form.IsBrowserExpanded && _form.Browser.Session.State == SessionState.LoggedOut,
             $"wake={_form.WakeEnabled} expanded={_form.IsBrowserExpanded} state={_form.Browser.Session.State}");
         await ReloadRouterAsync();
         var re = await LoginAsync();
@@ -432,7 +432,7 @@ internal sealed class SelfTestDriver
         _form.SetBrowserExpanded(false);
         var wakeTask = _form.RunWakeAsync(false);
         var expandedByDialog = await WaitUntilAsync(() => _form.IsBrowserExpanded && _form.StatusText.Contains("확인창"), TimeSpan.FromSeconds(25));
-        Check("확인창 감지 시 화면 자동 펼침", expandedByDialog, $"expanded={_form.IsBrowserExpanded} status='{_form.StatusText}'");
+        Check("확인창 감지 시 공유기 창 자동으로 띄움", expandedByDialog, $"expanded={_form.IsBrowserExpanded} status='{_form.StatusText}'");
         await ScreenshotAsync("04-dialog-expanded");
         await Js("window.__mock.confirmDialog()");
         var o9 = await wakeTask;
@@ -440,7 +440,7 @@ internal sealed class SelfTestDriver
 
         // 확인창 자동 확인(실기기 모양: [취소] [확인] 나란히). 화면을 접은 채로 끝나야 한다.
         s.AutoConfirmWakeDialog = true;
-        await ConfirmScenarioAsync(mock, "{dialogButtonRole:true, dialogSemClickNoop:false}", "확인창 자동 확인(접근성 버튼) — 화면 접힌 채 유지", "sem:dok");
+        await ConfirmScenarioAsync(mock, "{dialogButtonRole:true, dialogSemClickNoop:false}", "확인창 자동 확인(접근성 버튼) — 공유기 창을 닫은 채 유지", "sem:dok");
         await ConfirmScenarioAsync(mock, "{dialogButtonRole:false, dialogSemClickNoop:false}", "확인창 자동 확인(역할 없는 노드 → 위치 클릭)", "ptr:dok");
         await ConfirmScenarioAsync(mock, "{dialogButtonRole:true, dialogSemClickNoop:true}", "확인창 자동 확인(접근성 클릭 무반응 → 텍스트 위치)", "ptr:dok");
         await SetMock("{dialogButtonRole:true, dialogSemClickNoop:false, dialogOkLabel:'진행'}");
@@ -451,7 +451,7 @@ internal sealed class SelfTestDriver
         var manualTask = _form.RunWakeAsync(false);
         var expandedFallback = await WaitUntilAsync(() => _form.IsBrowserExpanded && _form.StatusText.Contains("자동으로 누르지 못했습니다"), TimeSpan.FromSeconds(30));
         var cMid = await CountsAsync();
-        Check("[확인]이 없으면 화면을 펼쳐 사용자에게 맡김([취소] 안 누름)", expandedFallback && cMid.Cancel == cBefore.Cancel && cMid.Confirm == cBefore.Confirm && mock.Signals.Count == 0,
+        Check("[확인]이 없으면 공유기 창을 띄워 사용자에게 맡김([취소] 안 누름)", expandedFallback && cMid.Cancel == cBefore.Cancel && cMid.Confirm == cBefore.Confirm && mock.Signals.Count == 0,
             $"expanded={_form.IsBrowserExpanded} cancel+{cMid.Cancel - cBefore.Cancel} signals={mock.Signals.Count} status='{_form.StatusText}'");
         await Task.Delay(300);
         Check("UI: 사용자 조작 필요 → 주의 알림·경고 단계·경고 안내", _form.AttentionCount > attentionBefore && _form.Flow.Wake.State == UI.StepState.Warning && _form.StatusKind == UI.Controls.BannerKind.Warning,
@@ -627,7 +627,7 @@ internal sealed class SelfTestDriver
         var serverSessionGone = mock.SessionCount == sessionsBefore - 1;
         Check("종료: 공유기 로그아웃 요청 후 세션 끊김 확인", r1.Confirmed && !r1.AlreadyLoggedOut && mock.LogoutCount == logoutsBefore + 1 && _form.Browser.Session.State == SessionState.LoggedOut && serverSessionGone,
             $"confirmed={r1.Confirmed} logout+{mock.LogoutCount - logoutsBefore} state={_form.Browser.Session.State} serverSessions={mock.SessionCount} msg={r1.Message}");
-        Check("종료: 의도한 로그아웃은 만료 경고·화면 펼침·알림 없음, VPN 유지", !_form.IsBrowserExpanded && _form.AttentionCount == attentionBefore && !_vpn.DisconnectCalled && _vpn.IsConnected("HomeVPN"),
+        Check("종료: 의도한 로그아웃은 만료 경고·공유기 창 띄움·알림 없음, VPN 유지", !_form.IsBrowserExpanded && _form.AttentionCount == attentionBefore && !_vpn.DisconnectCalled && _vpn.IsConnected("HomeVPN"),
             $"expanded={_form.IsBrowserExpanded} attention+{_form.AttentionCount - attentionBefore} vpn={_vpn.IsConnected("HomeVPN")}");
         Check("종료: 진행 중에는 버튼 비활성", !_form.WakeConnectEnabled && !_form.ConnectEnabled, $"wakeConnect={_form.WakeConnectEnabled} connect={_form.ConnectEnabled}");
 
@@ -784,7 +784,7 @@ internal sealed class SelfTestDriver
         Check("UI: 팝업을 닫으면 아무 작업도 시작하지 않음", p3 != null && _form.CurrentModePopup == null && !_form.IsBusy && _rdp.LaunchCount == launches,
             $"busy={_form.IsBusy} launches+{_rdp.LaunchCount - launches}");
 
-        // 5) 기록 창, 공유기 화면 접기
+        // 5) 기록 창, 공유기 화면(별도 창)
         var h0 = _form.ClientSize.Height;
         _form.SetLogVisible(true);
         var h1 = _form.ClientSize.Height;
@@ -792,15 +792,19 @@ internal sealed class SelfTestDriver
         var h2 = _form.ClientSize.Height;
         Check("UI: 기록 창 보이기/숨기기(창 높이 조정, 버튼 상태 유지)", h1 > h0 && h2 == h0 && _form.WakeConnectEnabled, $"h0={h0} h1={h1} h2={h2}");
         _form.SetBrowserExpanded(true);
-        var hExpanded = _form.ClientSize.Height;
+        var windowShown = _form.IsBrowserExpanded;
+        var hWithWindow = _form.ClientSize.Height;
         _form.SetBrowserExpanded(false);
+        var windowHidden = !_form.IsBrowserExpanded;
         var hCollapsed = _form.ClientSize.Height;
-        Check("UI: 공유기 화면 접기 → 창 높이 축소, 로그인 유지", hExpanded - hCollapsed > 500 && _form.BrowserAreaHeight == 0 && _form.Browser.Session.IsLoggedIn && _form.WakeEnabled,
-            $"expanded={hExpanded} collapsed={hCollapsed} area={_form.BrowserAreaHeight}");
+        Check("UI: 공유기 화면은 별도 창 — 띄우고 닫아도 메인 창 높이는 그대로, 로그인 유지",
+            windowShown && windowHidden && hWithWindow == h2 && hCollapsed == h2
+                && _form.BrowserAreaHeight == 0 && _form.Browser.Session.IsLoggedIn && _form.WakeEnabled,
+            $"shown={windowShown} hidden={windowHidden} 메인창 {h2}→{hWithWindow}→{hCollapsed} area={_form.BrowserAreaHeight}");
         _form.SetLogVisible(true);
         var areaWithLog = _form.BrowserAreaHeight;
         _form.SetLogVisible(false);
-        Check("UI: 접힌 채 기록 창을 열고 닫아도 공유기 화면 영역 0", areaWithLog == 0 && _form.BrowserAreaHeight == 0 && _form.ClientSize.Height == hCollapsed,
+        Check("UI: 공유기 창이 닫힌 채 기록 창을 열고 닫아도 메인 창 높이 유지", areaWithLog == 0 && _form.BrowserAreaHeight == 0 && _form.ClientSize.Height == hCollapsed,
             $"withLog={areaWithLog} after={_form.BrowserAreaHeight} h={_form.ClientSize.Height}/{hCollapsed}");
 
         // 6) 테마 전환
