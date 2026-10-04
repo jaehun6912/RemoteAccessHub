@@ -55,7 +55,11 @@ public sealed class CrdLauncher : ICrdLauncher
                 try
                 {
                     _log?.Info($"크롬 원격 데스크톱 앱 열기: {where}");
+                    // 앱 창은 저장해 둔 크기로 뜨고 명령줄 크기 지정을 따르지 않으므로, 뜬 뒤에 최대화한다.
+                    var processName = BrowserWindows.ProcessNameFor(browser);
+                    var before = BrowserWindows.Snapshot(processName);
                     using var _ = ProcessRunner.StartWindowed(browser, AppArgs(app, url));
+                    MaximizeInBackground(processName, before);
                     return CrdOpenTarget.App;
                 }
                 catch (Exception ex)
@@ -83,6 +87,20 @@ public sealed class CrdLauncher : ICrdLauncher
         using var __ = ProcessRunner.StartWindowed(Explorer(), new[] { url });
         return CrdOpenTarget.Browser;
     }
+
+    /// <summary>새 앱 창이 뜨기를 기다렸다가 최대화한다(여는 흐름을 막지 않도록 따로 돌린다).</summary>
+    private void MaximizeInBackground(string processName, HashSet<IntPtr> before) => Task.Run(() =>
+    {
+        try
+        {
+            if (!BrowserWindows.MaximizeNew(processName, before, TimeSpan.FromSeconds(10)))
+                _log?.Debug("크롬 원격 데스크톱 앱 창을 최대화하지 못했습니다(이미 열려 있던 창을 다시 쓴 경우 포함).");
+        }
+        catch (Exception ex)
+        {
+            _log?.Debug("크롬 원격 데스크톱 앱 창 최대화 실패: " + ex.Message);
+        }
+    });
 
     /// <summary>
     /// 앱 창으로 주소를 열 때 브라우저에 넘길 인수.

@@ -90,6 +90,14 @@ public class CrdAppFinderTests
         Assert.Contains("/session/1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d", args[1]);
     }
 
+    [Theory]
+    [InlineData(@"C:\Program Files (x86)\Microsoft\Edge\Application\msedge_proxy.exe", "msedge")]
+    [InlineData(@"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe", "msedge")]
+    [InlineData(@"C:\Program Files\Google\Chrome\Application\chrome_proxy.exe", "chrome")]
+    [InlineData(@"C:\Program Files\Google\Chrome\Application\chrome.exe", "chrome")]
+    public void App_window_belongs_to_the_browser_not_the_proxy(string exe, string expected)
+        => Assert.Equal(expected, BrowserWindows.ProcessNameFor(exe));
+
     [Fact]
     public void Unknown_profile_is_simply_left_out()
     {
