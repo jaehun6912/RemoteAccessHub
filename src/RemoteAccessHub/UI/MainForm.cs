@@ -36,6 +36,8 @@ public sealed class MainForm : Form
     /// <summary>PC가 켜져 있을 때 [PC 접속]을 서서히 밝아졌다 어두워지게 하는 타이머.</summary>
     private readonly System.Windows.Forms.Timer _blinkTimer = new() { Interval = 40 };
     private readonly System.Diagnostics.Stopwatch _blinkClock = new();
+    private bool _blinkConnectOn;
+    private bool _blinkRouterOn;
     /// <summary>한 번 밝아졌다 어두워지는 데 걸리는 시간.</summary>
     private static readonly TimeSpan BlinkPeriod = TimeSpan.FromSeconds(2.2);
 
@@ -111,7 +113,11 @@ public sealed class MainForm : Form
     public bool WakeConnectEnabled => _btnWakeConnect.Enabled;
     public bool ConnectEnabled => _btnConnect.Enabled;
     /// <summary>[PC 접속]이 지금 깜빡이는 중인지(자체검사용).</summary>
-    public bool ConnectBlinking => _blinkTimer.Enabled;
+    public bool ConnectBlinking => _blinkTimer.Enabled && _blinkConnectOn;
+    /// <summary>[공유기 화면]이 로그인 필요 알림으로 깜빡이는 중인지(자체검사용).</summary>
+    public bool RouterBlinking => _blinkTimer.Enabled && _blinkRouterOn;
+    public double RouterHighlight => _btnToggle.AttentionLevel;
+    public Color RouterBlinkColor => _btnToggle.AttentionColor;
     public double ConnectHighlight => _btnConnect.AttentionLevel;
     public bool ConnectHighlighted => _btnConnect.AttentionLevel > 0.5;
     public bool IsBusy => _busy;
@@ -279,7 +285,11 @@ public sealed class MainForm : Form
         _btnConnect.Click += (_, _) => ShowModePopup(wakeFirst: false);
         // 사인 곡선이라 양 끝에서 머물고 가운데에서 빨라져 '숨 쉬듯' 보인다.
         _blinkTimer.Tick += (_, _) =>
-            _btnConnect.AttentionLevel = (1 - Math.Cos(2 * Math.PI * (_blinkClock.Elapsed.TotalSeconds / BlinkPeriod.TotalSeconds))) / 2;
+        {
+            var level = (1 - Math.Cos(2 * Math.PI * (_blinkClock.Elapsed.TotalSeconds / BlinkPeriod.TotalSeconds))) / 2;
+            if (_blinkConnectOn) _btnConnect.AttentionLevel = level;
+            if (_blinkRouterOn) _btnToggle.AttentionLevel = level;
+        };
         _tips.SetToolTip(_btnConnect, "이미 켜진 PC에 바로 접속합니다. 누르면 일반/VPN 접속을 고릅니다. (Ctrl+Shift+Enter)");
 
         _btnCancel.Text = "취소";
@@ -289,6 +299,7 @@ public sealed class MainForm : Form
         _tips.SetToolTip(_btnCancel, "진행 중인 작업을 멈춥니다. VPN 연결은 끊지 않습니다. (Esc)");
 
         _btnToggle.Variant = ButtonVariant.Ghost;
+        _btnToggle.AttentionColor = Theme.Current.Warning; // 로그인이 풀렸다는 알림
         _btnToggle.Click += (_, _) => SetBrowserExpanded(!_browserExpanded);
         _tips.SetToolTip(_btnToggle, "공유기 화면 창을 띄우거나 닫습니다. 닫아도 로그인은 유지됩니다. (Ctrl+B)");
 
@@ -589,6 +600,7 @@ public sealed class MainForm : Form
         _pills.BackColor = p.Background;
         _logPanel.BackColor = p.Background;
         _routerWindow.ApplyTheme();
+        _btnToggle.AttentionColor = p.Warning;
         foreach (Control c in _topArea.Controls) if (c.Tag as string == "spacer") c.BackColor = p.Background;
         _title.ForeColor = p.Text;
         _txtLog.BackColor = p.LogBackground;
@@ -672,14 +684,20 @@ public sealed class MainForm : Form
     }
 
     /// <summary>
-    /// PC가 켜져 있는 것이 확인됐을 때만 [PC 접속]을 깜빡인다.
-    /// 전원 상태가 바뀌거나 버튼이 잠기면 바로 멈추고 원래 색으로 돌아간다.
+    /// 알림이 필요한 버튼을 천천히 깜빡인다.
+    /// PC가 켜진 것이 확인되면 [PC 접속](강조색), 공유기 로그인이 풀리면 [공유기 화면](주황).
+    /// 조건이 사라지거나 버튼이 잠기면 바로 멈추고 원래 색으로 돌아간다.
     /// </summary>
-    private void RefreshConnectBlink()
+    private void RefreshAttentionBlink()
     {
-        var blink = ActionGate.ShouldBlinkConnect(_settings.BlinkConnectWhenPcOn, _power.Status.State, _btnConnect.Enabled, _busy, _exiting);
-        if (blink == _blinkTimer.Enabled) return;
-        if (blink)
+        var setting = _settings.BlinkAttentionButtons;
+        _blinkConnectOn = ActionGate.ShouldBlinkConnect(setting, _power.Status.State, _btnConnect.Enabled, _busy, _exiting);
+        _blinkRouterOn = ActionGate.ShouldBlinkRouter(setting, _browser.Session.State, _routerWindow.Visible, _busy, _exiting);
+        if (!_blinkConnectOn) _btnConnect.AttentionLevel = 0;
+        if (!_blinkRouterOn) _btnToggle.AttentionLevel = 0;
+        var any = _blinkConnectOn || _blinkRouterOn;
+        if (any == _blinkTimer.Enabled) return;
+        if (any)
         {
             _blinkClock.Restart(); // 늘 어두운 쪽에서 시작한다
             _blinkTimer.Start();
@@ -688,7 +706,6 @@ public sealed class MainForm : Form
         {
             _blinkTimer.Stop();
             _blinkClock.Reset();
-            _btnConnect.AttentionLevel = 0;
         }
     }
 
@@ -736,7 +753,7 @@ public sealed class MainForm : Form
             _powerPill.Set(power.PillText, color, Theme.Glyph.Power);
             _tips.SetToolTip(_powerPill, power.Detail + " (눌러서 지금 확인)");
         }
-        RefreshConnectBlink();
+        RefreshAttentionBlink();
         LayoutHeader();
     }
 

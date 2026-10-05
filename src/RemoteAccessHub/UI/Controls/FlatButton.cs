@@ -22,6 +22,7 @@ public sealed class FlatButton : Button
     private string _glyph = "";
     private Image? _glyphImage;
     private double _attention;
+    private Color? _attentionColor;
     private int _splitWidth;
 
     public event EventHandler? DropDownClick;
@@ -36,6 +37,13 @@ public sealed class FlatButton : Button
     /// <summary>
     /// 강조 정도(0 = 평소, 1 = 주 버튼 색). 서서히 밝아졌다 어두워지도록 사이값을 받는다.
     /// </summary>
+    /// <summary>강조할 때 쓸 색(지정하지 않으면 주 버튼 색).</summary>
+    public Color AttentionColor
+    {
+        get => _attentionColor ?? Theme.Current.Accent;
+        set { if (_attentionColor == value) return; _attentionColor = value; Invalidate(); }
+    }
+
     [DefaultValue(0.0)]
     public double AttentionLevel
     {
@@ -157,8 +165,9 @@ public sealed class FlatButton : Button
         // 깜빡임: 모양은 그대로 두고 색만 주 버튼 쪽으로 서서히 옮긴다.
         if (_attention > 0 && Enabled)
         {
-            fill = Theme.Blend(fill, p.Accent, _attention);
-            border = Theme.Blend(border, p.Accent, _attention);
+            var accent = AttentionColor;
+            fill = Theme.Blend(fill, accent, _attention);
+            border = Theme.Blend(border, accent, _attention);
             // 중간 색 위에서도 글자가 읽히도록 두 글자색 중 대비가 나은 쪽을 쓴다.
             text = Theme.Contrast(p.OnAccent, fill) > Theme.Contrast(p.Text, fill) ? p.OnAccent : p.Text;
         }

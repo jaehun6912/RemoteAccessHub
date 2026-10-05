@@ -209,16 +209,44 @@ public class ConnectBlinkTests
     public void Setting_turns_it_off()
     {
         Assert.False(ActionGate.ShouldBlinkConnect(false, PcPowerState.On, connectEnabled: true, busy: false, exiting: false));
-        Assert.True(new AppSettings().BlinkConnectWhenPcOn);
+        Assert.True(new AppSettings().BlinkAttentionButtons);
+    }
+
+    [Fact]
+    public void Router_blink_only_when_the_router_says_logged_out()
+    {
+        Assert.True(ActionGate.ShouldBlinkRouter(true, SessionState.LoggedOut, routerWindowOpen: false, busy: false, exiting: false));
+        // 아직 확인 전(Unknown)에는 알리지 않는다. 로그인되어 있으면 당연히 알리지 않는다.
+        Assert.False(ActionGate.ShouldBlinkRouter(true, SessionState.Unknown, routerWindowOpen: false, busy: false, exiting: false));
+        Assert.False(ActionGate.ShouldBlinkRouter(true, SessionState.LoggedIn, routerWindowOpen: false, busy: false, exiting: false));
+    }
+
+    [Fact]
+    public void Router_blink_stops_when_the_window_is_already_open_or_the_app_is_busy()
+    {
+        // 창이 열려 있으면 거기서 로그인하면 되므로 깜빡이지 않는다.
+        Assert.False(ActionGate.ShouldBlinkRouter(true, SessionState.LoggedOut, routerWindowOpen: true, busy: false, exiting: false));
+        Assert.False(ActionGate.ShouldBlinkRouter(true, SessionState.LoggedOut, routerWindowOpen: false, busy: true, exiting: false));
+        Assert.False(ActionGate.ShouldBlinkRouter(true, SessionState.LoggedOut, routerWindowOpen: false, busy: false, exiting: true));
+        Assert.False(ActionGate.ShouldBlinkRouter(false, SessionState.LoggedOut, routerWindowOpen: false, busy: false, exiting: false));
+    }
+
+    [Fact]
+    public void One_setting_governs_both_blinks()
+    {
+        Assert.True(new AppSettings().BlinkAttentionButtons);
+        var off = new AppSettings { BlinkAttentionButtons = false };
+        Assert.False(ActionGate.ShouldBlinkConnect(off.BlinkAttentionButtons, PcPowerState.On, true, false, false));
+        Assert.False(ActionGate.ShouldBlinkRouter(off.BlinkAttentionButtons, SessionState.LoggedOut, false, false, false));
     }
 
     [Fact]
     public void Setting_survives_export_and_import()
     {
-        var s = new AppSettings { BlinkConnectWhenPcOn = false, PowerCheckMode = "direct" };
+        var s = new AppSettings { BlinkAttentionButtons = false, PowerCheckMode = "direct" };
         var back = AppSettings.FromExportJson(s.ToExportJson(), out var error);
         Assert.Null(error);
-        Assert.False(back!.BlinkConnectWhenPcOn);
+        Assert.False(back!.BlinkAttentionButtons);
         Assert.Equal(PowerSource.Direct, back.PowerCheck);
     }
 }

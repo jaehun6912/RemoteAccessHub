@@ -80,8 +80,12 @@ public sealed class AppSettings
     /// <summary>전원 상태를 다시 확인하는 주기(초).</summary>
     public int PowerCheckSeconds { get; set; } = 60;
 
-    /// <summary>PC가 켜진 것이 확인되면 [PC 접속] 버튼을 천천히 깜빡인다.</summary>
-    public bool BlinkConnectWhenPcOn { get; set; } = true;
+    /// <summary>
+    /// 알림이 필요하면 버튼을 천천히 깜빡인다(PC가 켜지면 [PC 접속], 공유기 로그인이 풀리면 [공유기 화면]).
+    /// 설정 파일의 이름은 1.6.1 때 쓰던 것을 그대로 둬 기존 설정과 호환된다.
+    /// </summary>
+    [JsonPropertyName("BlinkConnectWhenPcOn")]
+    public bool BlinkAttentionButtons { get; set; } = true;
 
     // --- 공통 ---
     public int BootWaitSeconds { get; set; } = 180;

@@ -1,3 +1,4 @@
+using RemoteAccessHub.Core;
 using RemoteAccessHub.Services;
 
 namespace RemoteAccessHub.UI;
@@ -29,4 +30,12 @@ public static class ActionGate
     /// <param name="connectEnabled">[PC 접속]을 누를 수 있는 상태인지</param>
     public static bool ShouldBlinkConnect(bool setting, PcPowerState power, bool connectEnabled, bool busy, bool exiting)
         => setting && power == PcPowerState.On && connectEnabled && !busy && !exiting;
+
+    /// <summary>
+    /// [공유기 화면] 버튼을 깜빡여 로그인이 필요하다고 알릴 때인지.
+    /// 공유기가 "인증되지 않음"이라고 <b>확정해서</b> 답했고, 공유기 창이 닫혀 있을 때만 알린다.
+    /// 창이 이미 열려 있으면 거기서 로그인하면 되므로 깜빡이지 않는다.
+    /// </summary>
+    public static bool ShouldBlinkRouter(bool setting, SessionState session, bool routerWindowOpen, bool busy, bool exiting)
+        => setting && session == SessionState.LoggedOut && !routerWindowOpen && !busy && !exiting;
 }

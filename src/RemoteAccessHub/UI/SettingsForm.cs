@@ -36,7 +36,7 @@ public sealed class SettingsForm : Form
     private readonly TextBox _wakePattern = new();
     private readonly NumericUpDown _probeInterval = new() { Minimum = 5, Maximum = 600 };
     private readonly ComboBox _powerCheck = new() { DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly CheckBox _blinkConnect = new() { Text = "PC가 켜져 있으면 [PC 접속] 버튼을 천천히 깜빡이기" };
+    private readonly CheckBox _blinkConnect = new() { Text = "알림이 필요하면 버튼을 천천히 깜빡이기 (PC 켜짐 → [PC 접속], 공유기 로그인 필요 → [공유기 화면])" };
     private readonly NumericUpDown _powerSeconds = new() { Minimum = 15, Maximum = 3600, Increment = 15 };
 
     private static readonly (string Label, PowerSource Mode)[] PowerChoices =
@@ -371,7 +371,7 @@ public sealed class SettingsForm : Form
         _probeInterval.Value = Clamp(_work.SessionProbeIntervalSeconds, 5, 600);
         _powerCheck.SelectedIndex = Math.Max(0, Array.FindIndex(PowerChoices, c => c.Mode == _work.PowerCheck));
         _powerSeconds.Value = Clamp(_work.PowerCheckSeconds, 15, 3600);
-        _blinkConnect.Checked = _work.BlinkConnectWhenPcOn;
+        _blinkConnect.Checked = _work.BlinkAttentionButtons;
     }
 
     private static decimal Clamp(int v, int min, int max) => Math.Min(max, Math.Max(min, v));
@@ -416,7 +416,7 @@ public sealed class SettingsForm : Form
             _ => "auto",
         };
         _work.PowerCheckSeconds = (int)_powerSeconds.Value;
-        _work.BlinkConnectWhenPcOn = _blinkConnect.Checked;
+        _work.BlinkAttentionButtons = _blinkConnect.Checked;
     }
 
     private void OnSave()

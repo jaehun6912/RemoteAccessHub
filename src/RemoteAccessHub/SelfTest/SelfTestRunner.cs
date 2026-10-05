@@ -333,6 +333,18 @@ internal sealed class SelfTestDriver
             $"step={oExp.LastStep} signals={mock.Signals.Count} msg={oExp.Message}");
         Check("세션 만료 후 버튼 비활성화·공유기 창 띄움", !_form.WakeEnabled && _form.IsBrowserExpanded && _form.Browser.Session.State == SessionState.LoggedOut,
             $"wake={_form.WakeEnabled} expanded={_form.IsBrowserExpanded} state={_form.Browser.Session.State}");
+        // 로그인이 풀린 채 공유기 창을 닫으면 [공유기 화면] 버튼이 주황색으로 깜빡여 알린다.
+        _form.SetBrowserExpanded(false);
+        var routerBlink = _form.RouterBlinking;
+        var litUp = await WaitUntilAsync(() => _form.RouterHighlight > 0.5, TimeSpan.FromSeconds(4));
+        var wentBack = await WaitUntilAsync(() => _form.RouterHighlight < 0.5, TimeSpan.FromSeconds(4));
+        var blinkColor = _form.RouterBlinkColor;
+        _form.SetBrowserExpanded(true);
+        await Task.Delay(200);
+        Check("공유기 로그인이 풀리면 [공유기 화면]이 주황색으로 깜빡임(창을 열면 멈춤)",
+            routerBlink && litUp && wentBack && blinkColor == Theme.Current.Warning && !_form.RouterBlinking && _form.RouterHighlight == 0,
+            $"깜빡임={routerBlink} 밝아짐={litUp} 되돌아옴={wentBack} 색=주황{blinkColor == Theme.Current.Warning} 창 연 뒤 깜빡임={_form.RouterBlinking}");
+
         await ReloadRouterAsync();
         var re = await LoginAsync();
         await WaitUntilAsync(() => _form.LastSettle?.Status == NavStatus.Ok, TimeSpan.FromSeconds(20));
@@ -1066,7 +1078,7 @@ internal sealed class SelfTestDriver
 
             // 4) PC가 켜진 것이 확인되면 [PC 접속]이 깜빡이고, 응답이 없으면 멈춘다
             s.PowerCheckMode = "direct";
-            s.BlinkConnectWhenPcOn = true;
+            s.BlinkAttentionButtons = true;
             _port.NeverOpen = false;
             _port.OpenAfterAttempts = 0;
             await _form.CheckPowerNowAsync();
@@ -1081,12 +1093,12 @@ internal sealed class SelfTestDriver
                 blinkOn && litUp && wentBack && !_form.ConnectBlinking && !_form.ConnectHighlighted,
                 $"켜짐에서 깜빡임={blinkOn} 강조됨={litUp} 되돌아옴={wentBack} 응답없음에서 깜빡임={_form.ConnectBlinking}");
 
-            s.BlinkConnectWhenPcOn = false;
+            s.BlinkAttentionButtons = false;
             _port.NeverOpen = false;
             await _form.CheckPowerNowAsync();
             Check("전원 배지: 설정에서 끄면 깜빡이지 않음", !_form.ConnectBlinking && !_form.ConnectHighlighted,
                 $"깜빡임={_form.ConnectBlinking} 강조됨={_form.ConnectHighlighted}");
-            s.BlinkConnectWhenPcOn = true;
+            s.BlinkAttentionButtons = true;
 
             // 5) 끄면 배지도 사라지고 네트워크를 건드리지 않음
             s.PowerCheckMode = "off";
