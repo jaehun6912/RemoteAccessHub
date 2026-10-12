@@ -921,8 +921,9 @@ public sealed class MainForm : Form
             if (oldState == SessionState.LoggedIn)
             {
                 _log.Warn("공유기 세션 만료/로그아웃 감지 → [PC 켜기] 비활성화 (" + reason + ")");
-                SetStatus("공유기 세션이 만료되었습니다. 공유기 화면 창에서 다시 로그인하세요.", BannerKind.Warning);
-                SetBrowserExpanded(true);
+                // 쓰고 있는 화면 위로 창이 불쑥 뜨지 않도록 여기서는 띄우지 않는다.
+                // 대신 안내 줄과 [공유기 화면] 버튼 깜빡임(주황)으로 알린다.
+                SetStatus("공유기 세션이 만료되었습니다. [공유기 화면]을 눌러 다시 로그인하세요.", BannerKind.Warning);
                 NotifyAttention();
             }
             else

@@ -326,24 +326,32 @@ internal sealed class SelfTestDriver
         Check("Unavailable 결과가 상태를 바꾸지 않음", _form.Browser.Session.IsLoggedIn, _form.Browser.Session.Describe());
 
         // ================= D. 세션 만료 =================
-        mock.ExpireSessions();
-        mock.ClearSignals();
-        var oExp = await _form.RunWakeAsync(skipNavigation: false);
-        Check("세션 만료 시 PC 켜기 거부(클릭 없음)", !oExp.Success && oExp.LastStep == WolStep.SessionCheck && mock.Signals.Count == 0,
-            $"step={oExp.LastStep} signals={mock.Signals.Count} msg={oExp.Message}");
-        Check("세션 만료 후 버튼 비활성화·공유기 창 띄움", !_form.WakeEnabled && _form.IsBrowserExpanded && _form.Browser.Session.State == SessionState.LoggedOut,
-            $"wake={_form.WakeEnabled} expanded={_form.IsBrowserExpanded} state={_form.Browser.Session.State}");
-        // 로그인이 풀린 채 공유기 창을 닫으면 [공유기 화면] 버튼이 주황색으로 깜빡여 알린다.
+        // 실제 사용처럼 로그인 뒤 공유기 창이 닫혀 있는 상태에서 만료시킨다.
         _form.SetBrowserExpanded(false);
+        mock.ExpireSessions();
+        var noticed = await WaitSessionAsync(SessionState.LoggedOut, TimeSpan.FromSeconds(20));
+        await Task.Delay(300);
+        Check("세션 만료를 스스로 알아차려도 공유기 창을 제멋대로 띄우지 않음",
+            noticed && !_form.IsBrowserExpanded && !_form.WakeEnabled && _form.StatusText.Contains("[공유기 화면]을 눌러"),
+            $"알아챔={noticed} 창={_form.IsBrowserExpanded} wake={_form.WakeEnabled} status='{_form.StatusText}'");
+
+        // 창이 닫힌 채 로그인이 풀려 있으면 [공유기 화면] 버튼이 주황색으로 깜빡여 알린다.
         var routerBlink = _form.RouterBlinking;
         var litUp = await WaitUntilAsync(() => _form.RouterHighlight > 0.5, TimeSpan.FromSeconds(4));
         var wentBack = await WaitUntilAsync(() => _form.RouterHighlight < 0.5, TimeSpan.FromSeconds(4));
         var blinkColor = _form.RouterBlinkColor;
-        _form.SetBrowserExpanded(true);
-        await Task.Delay(200);
-        Check("공유기 로그인이 풀리면 [공유기 화면]이 주황색으로 깜빡임(창을 열면 멈춤)",
-            routerBlink && litUp && wentBack && blinkColor == Theme.Current.Warning && !_form.RouterBlinking && _form.RouterHighlight == 0,
-            $"깜빡임={routerBlink} 밝아짐={litUp} 되돌아옴={wentBack} 색=주황{blinkColor == Theme.Current.Warning} 창 연 뒤 깜빡임={_form.RouterBlinking}");
+        Check("공유기 로그인이 풀리면 [공유기 화면]이 주황색으로 깜빡임",
+            routerBlink && litUp && wentBack && blinkColor == Theme.Current.Warning,
+            $"깜빡임={routerBlink} 밝아짐={litUp} 되돌아옴={wentBack} 색=주황{blinkColor == Theme.Current.Warning}");
+
+        // 사용자가 [PC 켜기]를 누르면 그때는 로그인하라고 창을 띄운다(자동이 아니라 사용자 동작에 대한 응답).
+        mock.ClearSignals();
+        var oExp = await _form.RunWakeAsync(skipNavigation: false);
+        Check("세션 만료 시 PC 켜기 거부(클릭 없음)", !oExp.Success && oExp.LastStep == WolStep.SessionCheck && mock.Signals.Count == 0,
+            $"step={oExp.LastStep} signals={mock.Signals.Count} msg={oExp.Message}");
+        Check("사용자가 [PC 켜기]를 누르면 그때 공유기 창을 띄우고 깜빡임도 멈춤",
+            _form.IsBrowserExpanded && !_form.RouterBlinking && _form.RouterHighlight == 0 && !_form.WakeEnabled,
+            $"창={_form.IsBrowserExpanded} 깜빡임={_form.RouterBlinking} wake={_form.WakeEnabled}");
 
         await ReloadRouterAsync();
         var re = await LoginAsync();
@@ -639,7 +647,7 @@ internal sealed class SelfTestDriver
         var serverSessionGone = mock.SessionCount == sessionsBefore - 1;
         Check("종료: 공유기 로그아웃 요청 후 세션 끊김 확인", r1.Confirmed && !r1.AlreadyLoggedOut && mock.LogoutCount == logoutsBefore + 1 && _form.Browser.Session.State == SessionState.LoggedOut && serverSessionGone,
             $"confirmed={r1.Confirmed} logout+{mock.LogoutCount - logoutsBefore} state={_form.Browser.Session.State} serverSessions={mock.SessionCount} msg={r1.Message}");
-        Check("종료: 의도한 로그아웃은 만료 경고·공유기 창 띄움·알림 없음, VPN 유지", !_form.IsBrowserExpanded && _form.AttentionCount == attentionBefore && !_vpn.DisconnectCalled && _vpn.IsConnected("HomeVPN"),
+        Check("종료: 의도한 로그아웃은 만료 경고·알림 없음, VPN 유지", !_form.IsBrowserExpanded && _form.AttentionCount == attentionBefore && !_vpn.DisconnectCalled && _vpn.IsConnected("HomeVPN"),
             $"expanded={_form.IsBrowserExpanded} attention+{_form.AttentionCount - attentionBefore} vpn={_vpn.IsConnected("HomeVPN")}");
         Check("종료: 진행 중에는 버튼 비활성", !_form.WakeConnectEnabled && !_form.ConnectEnabled, $"wakeConnect={_form.WakeConnectEnabled} connect={_form.ConnectEnabled}");
 
