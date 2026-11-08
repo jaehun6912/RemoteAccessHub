@@ -29,6 +29,28 @@ internal static class Drawing
         TextRenderer.MeasureText(text, font, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
 
     /// <summary>비활성 항목의 아이콘처럼 흐리게 그린다.</summary>
+    /// <summary>
+    /// 그림을 그린다. 아이콘을 다시 읽어 예전 그림이 이미 버려졌을 수 있으므로
+    /// 실패하면 false를 돌려주고, 부르는 쪽이 글리프로 대신 그린다.
+    /// </summary>
+    public static bool TryDrawImage(Graphics g, Image? image, Rectangle box, float opacity)
+    {
+        if (image == null) return false;
+        try
+        {
+            var old = g.InterpolationMode;
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            if (opacity >= 1f) g.DrawImage(image, box);
+            else DrawImageFaded(g, image, box, opacity);
+            g.InterpolationMode = old;
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
     public static void DrawImageFaded(Graphics g, Image image, Rectangle box, float opacity)
     {
         using var attrs = new System.Drawing.Imaging.ImageAttributes();

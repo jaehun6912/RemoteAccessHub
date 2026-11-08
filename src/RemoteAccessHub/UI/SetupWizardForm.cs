@@ -440,7 +440,7 @@ public sealed class SetupWizardForm : Form
         Line("켤 PC", _work.WolPcName + (_work.WolPcMac.Length > 0 ? $"  ·  {_work.WolPcMac}" : ""));
         Line("일반 접속", _work.PublicHost.Length > 0 ? InputRules.HostPort(_work.PublicHost, _work.PublicRdpPort) : "사용 안 함");
         Line("VPN 접속", _work.VpnName.Length > 0 ? $"{_work.VpnName} 연결 후 {InputRules.HostPort(_work.VpnDesktopIp, _work.VpnRdpPort)}" : "사용 안 함");
-        Line("크롬 원격 데스크톱", !_work.UseCrd ? "사용 안 함" : _work.CrdHostId.Length > 0 ? "저장된 기기로 바로 연결" : "브라우저에서 기기 고르기");
+        Line("크롬 원격 데스크톱", !_work.UseCrd ? "사용 안 함" : _work.CrdHostId.Length > 0 ? "저장된 기기로 연결" : "브라우저에서 기기 고르기");
         _summary.ResumeLayout(true);
     }
 

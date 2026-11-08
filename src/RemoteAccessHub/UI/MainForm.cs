@@ -19,8 +19,10 @@ public sealed class MainForm : Form
 {
     private const int LogicalBrowserWidth = 1180;
     private const int LogicalBrowserHeight = 720;
-    /// <summary>메인 창 너비(공유기 화면이 빠져 더 좁아도 된다).</summary>
-    private const int LogicalMainWidth = 1180;
+    /// <summary>메인 창 기본 너비(단계 4칸 + 방식 2열이 모두 들어간다).</summary>
+    private const int LogicalMainWidth = 980;
+    /// <summary>이보다 좁아지지 않는다. 여기서는 단계가 2x2, 방식이 1열로 접힌다.</summary>
+    private const int LogicalMinWidth = 680;
     private const int LogicalLogHeight = 150;
 
     private readonly LaunchOptions _options;
@@ -63,7 +65,6 @@ public sealed class MainForm : Form
     private bool _wakeRunning;
     private bool _exiting;
     private bool _exitApproved;
-    private ModePopup? _modePopup;
     private int _uiTicks;
     private bool? _vpnConnectedCache;
 
@@ -78,16 +79,36 @@ public sealed class MainForm : Form
     private readonly FlatButton _btnSettings = new();
     private readonly FlatButton _btnMore = new();
     private readonly FlatButton _btnExit = new();
+    /// <summary>큰 상태 카드: 히어로 줄 + 4단계 칸.</summary>
     private readonly CardPanel _stepCard = new();
+    private readonly HeroCard _hero = new();
     private readonly StepperControl _stepper = new();
+    private readonly FlatButton _btnHeroAction = new();
+    /// <summary>접속 방식 카드 묶음(예전 팝업을 대신한다).</summary>
+    private readonly CardPanel _connectCard = new();
+    private readonly Label _connectTitle = new();
+    private readonly Label _connectHint = new();
+    private readonly MethodList _methods = new();
+    private readonly Panel _methodsEmpty = new();
+    private readonly Label _emptyTitle = new();
+    private readonly Label _emptyBody = new();
+    private readonly FlatButton _btnSetupMethods = new();
     private readonly StatusBanner _banner = new();
     private readonly Panel _actions = new();
-    private readonly FlatButton _btnWakeConnect = new();
     private readonly FlatButton _btnWake = new();
-    private readonly FlatButton _btnConnect = new();
     private readonly FlatButton _btnCancel = new();
     private readonly FlatButton _btnToggle = new();
     private readonly FlatButton _btnLog = new();
+    private readonly FlatButton _btnMini = new();
+    private MiniWindow? _mini;
+    private (bool Wake, bool WakeConnect, bool Connect) _gate;
+    private bool _layouting;
+    /// <summary>마지막으로 시도한 접속 방식([다시 시도]가 쓴다).</summary>
+    private ConnectMode? _lastTried;
+    private HeroActionKind _heroAction = HeroActionKind.None;
+    /// <summary>설정상 보여야 하는 배지(자리가 모자라면 실제로는 숨길 수 있다).</summary>
+    private bool _vpnPillWanted;
+    private bool _powerPillWanted;
     private readonly Panel _logPanel = new();
     private readonly TextBox _txtLog = new();
     private readonly ContextMenuStrip _moreMenu = new();
@@ -110,16 +131,16 @@ public sealed class MainForm : Form
     public bool IsBrowserExpanded => _routerWindow.Visible;
     public bool IsLogVisible => _logVisible;
     public bool WakeEnabled => _btnWake.Enabled;
-    public bool WakeConnectEnabled => _btnWakeConnect.Enabled;
-    public bool ConnectEnabled => _btnConnect.Enabled;
+    public bool WakeConnectEnabled => _gate.WakeConnect;
+    public bool ConnectEnabled => _gate.Connect;
     /// <summary>[PC 접속]이 지금 깜빡이는 중인지(자체검사용).</summary>
     public bool ConnectBlinking => _blinkTimer.Enabled && _blinkConnectOn;
     /// <summary>[공유기 화면]이 로그인 필요 알림으로 깜빡이는 중인지(자체검사용).</summary>
     public bool RouterBlinking => _blinkTimer.Enabled && _blinkRouterOn;
     public double RouterHighlight => _btnToggle.AttentionLevel;
     public Color RouterBlinkColor => _btnToggle.AttentionColor;
-    public double ConnectHighlight => _btnConnect.AttentionLevel;
-    public bool ConnectHighlighted => _btnConnect.AttentionLevel > 0.5;
+    public double ConnectHighlight => PrimaryMethod?.AttentionLevel ?? 0;
+    public bool ConnectHighlighted => ConnectHighlight > 0.5;
     public bool IsBusy => _busy;
     public string StatusText => _banner.Text;
     public BannerKind StatusKind => _banner.Kind;
@@ -127,14 +148,31 @@ public sealed class MainForm : Form
     public string WolRouterText => _flow.WolRouterText;
     public string WolBootText => _flow.WolBootText;
     public string RouterPillText => _routerPill.Text;
-    public string VpnPillText => _vpnPill.Visible ? _vpnPill.Text : "";
-    public string PowerPillText => _powerPill.Visible ? _powerPill.Text : "";
+    public string VpnPillText => _vpnPillWanted ? _vpnPill.Text : "";
+    public string PowerPillText => _powerPillWanted ? _powerPill.Text : "";
     public PcPowerStatus PcPowerStatus => _power.Status;
     /// <summary>자체검사용: 전원 상태를 지금 확인한다.</summary>
     public Task CheckPowerNowAsync() => _power.CheckNowAsync();
     public int AttentionCount { get; private set; }
-    public string WakeConnectButtonText => _btnWakeConnect.Text;
-    public bool ConnectButtonsHaveArrow => _btnConnect.ShowArrow || _btnConnect.SplitWidth > 0 || _btnWakeConnect.ShowArrow || _btnWakeConnect.SplitWidth > 0;
+    /// <summary>자체검사용: 주 방식 카드에 적힌 글(PC가 꺼져 있으면 "켜고 접속").</summary>
+    public string WakeConnectButtonText => PrimaryMethod?.Title ?? "";
+    public bool ConnectButtonsHaveArrow => PrimaryMethod?.Primary == true;
+    /// <summary>자체검사용: 지금 보이는 접속 방식 카드들.</summary>
+    public IReadOnlyList<MethodCard> MethodCards => _methods.Cards;
+    /// <summary>자체검사용: 맨 위(주) 방식 카드.</summary>
+    public MethodCard? PrimaryMethod => _methods.Cards.Count > 0 ? _methods.Cards[0] : null;
+    /// <summary>자체검사용: 접속 방법이 하나도 설정되지 않아 빈 안내가 떠 있는지.</summary>
+    public bool MethodsEmptyShown => _methodsEmpty.Visible;
+    /// <summary>자체검사용: 알림줄에 붙은 행동 버튼들.</summary>
+    public IReadOnlyList<string> BannerActions => _banner.ActionTexts;
+    /// <summary>자체검사용: 미니 창이 떠 있는지.</summary>
+    public bool IsMiniMode => _mini?.Visible == true;
+    /// <summary>자체검사용: 미니 창(사진용).</summary>
+    public Form? MiniWindowForTest => _mini;
+    /// <summary>자체검사용: 단계 칸이 지금 몇 열인지(넓으면 4, 좁으면 2).</summary>
+    public int StepColumns => _stepper.ColumnCount;
+    /// <summary>자체검사용: 접속 카드가 지금 몇 열로 놓였는지.</summary>
+    public int MethodColumns => _methods.ColumnCount;
     public bool IsExiting => _exiting;
     public bool IsPreparingAdmin => _preparingAdmin;
 
@@ -224,7 +262,7 @@ public sealed class MainForm : Form
         _btnExit.Click += (_, _) => _ = ExitWithLogoutAsync();
         _tips.SetToolTip(_btnExit, "공유기 관리 세션을 로그아웃한 뒤 프로그램을 종료합니다. VPN 연결은 끊지 않습니다. (Ctrl+Q)");
 
-        foreach (var (b, glyph, name) in new[] { (_btnSettings, Theme.Glyph.Settings, "설정"), (_btnMore, Theme.Glyph.More, "더 보기") })
+        foreach (var (b, glyph, name) in new[] { (_btnMini, Theme.Glyph.ChevronDown, "작게 접기"), (_btnSettings, Theme.Glyph.Settings, "설정"), (_btnMore, Theme.Glyph.More, "더 보기") })
         {
             b.IconOnly = true;
             b.Glyph = glyph;
@@ -255,42 +293,83 @@ public sealed class MainForm : Form
             pill.Margin = new Padding(L(8), L(3), 0, 0);
         }
 
-        _header.Controls.AddRange(new Control[] { _title, _pills, _btnMore, _btnSettings, _btnExit });
+        _header.Controls.AddRange(new Control[] { _title, _pills, _btnMini, _btnMore, _btnSettings, _btnExit });
         _header.Resize += (_, _) => LayoutHeader();
 
-        // --- 단계 표시
+        // --- 큰 상태 카드: 히어로 줄 + 4단계 칸
         _stepCard.Dock = DockStyle.Top;
-        _stepCard.Padding = new Padding(L(4), L(6), L(4), L(4));
-        _stepper.Dock = DockStyle.Fill;
+        _stepCard.Padding = new Padding(L(18), L(16), L(18), L(16));
+        _btnHeroAction.Variant = ButtonVariant.Secondary;
+        _btnHeroAction.Font = Theme.UiFont(9f);
+        _btnHeroAction.Size = new Size(L(96), L(34));
+        _btnHeroAction.Click += (_, _) => OnHeroAction();
+        _blinkTimer.Tick += (_, _) =>
+        {
+            // 코사인으로 서서히 밝아졌다 어두워진다(또렷한 점멸이 아니라 숨쉬듯).
+            var level = (1 - Math.Cos(2 * Math.PI * (_blinkClock.Elapsed.TotalSeconds / BlinkPeriod.TotalSeconds))) / 2;
+            if (_blinkConnectOn && PrimaryMethod is { } pm) pm.AttentionLevel = level;
+            if (_blinkRouterOn) _btnToggle.AttentionLevel = level;
+        };
+        _hero.RightControl = _btnHeroAction;
+        _hero.Controls.Add(_btnHeroAction);
         _stepCard.Controls.Add(_stepper);
+        _stepCard.Controls.Add(_hero);
+
+        // --- 접속 방식 카드
+        _connectCard.Dock = DockStyle.Top;
+        _connectCard.Padding = new Padding(L(18), L(14), L(18), L(16));
+        _connectTitle.Text = "접속";
+        _connectTitle.Font = Theme.UiFont(10.5f, FontStyle.Bold);
+        _connectTitle.AutoSize = true;
+        _connectTitle.Tag = "keep";
+        _connectHint.AutoSize = true;
+        _connectHint.Font = Theme.UiFont(9f);
+        _connectHint.Tag = "sub";
+        _methodsEmpty.Visible = false;
+        _emptyTitle.Text = "접속 방법을 하나만 정하면 됩니다";
+        _emptyTitle.Font = Theme.UiFont(10.5f, FontStyle.Bold);
+        _emptyTitle.AutoSize = false;
+        _emptyTitle.Tag = "keep";
+        _emptyBody.Text = "일반 접속(주소·외부 포트) · VPN 접속(연결 이름·내부 IP) · 크롬 원격 데스크톱(포트 없이)\n"
+            + "셋 중 하나라도 넣으면 여기에 카드로 나타납니다.";
+        _emptyBody.Font = Theme.UiFont(9f);
+        _emptyBody.AutoSize = false;
+        _emptyBody.Tag = "sub";
+        _btnSetupMethods.Text = "접속 방법 설정";
+        _btnSetupMethods.Glyph = Theme.Glyph.Settings;
+        _btnSetupMethods.Variant = ButtonVariant.Primary;
+        _btnSetupMethods.Click += (_, _) => OpenSettings();
+        _methodsEmpty.Controls.AddRange(new Control[] { _emptyTitle, _emptyBody, _btnSetupMethods });
+        _methodsEmpty.Resize += (_, _) => LayoutEmptyMethods();
+        // 아직 아무것도 없다는 뜻으로 점선 테두리를 그린다(채워진 카드와 구분되게).
+        _methodsEmpty.Paint += (_, e) =>
+        {
+            Drawing.Smooth(e.Graphics);
+            var r = new RectangleF(0.5f, 0.5f, _methodsEmpty.Width - 1.5f, _methodsEmpty.Height - 1.5f);
+            using var path = Drawing.RoundedRect(r, L(10));
+            using var pen = new Pen(Theme.Blend(Theme.Current.Surface, Theme.Current.Border, 0.9))
+            {
+                DashStyle = System.Drawing.Drawing2D.DashStyle.Dash,
+                DashPattern = new[] { 4f, 3f },
+            };
+            e.Graphics.DrawPath(pen, path);
+        };
+        _connectCard.Controls.Add(_methodsEmpty);
+        _connectCard.Controls.Add(_methods);
+        _connectCard.Controls.Add(_connectHint);
+        _connectCard.Controls.Add(_connectTitle);
+        BuildMethodCards();
 
         // --- 안내 줄
         _banner.Dock = DockStyle.Top;
 
         // --- 동작 버튼
         _actions.Dock = DockStyle.Top;
-        _btnWakeConnect.Variant = ButtonVariant.Primary;
-        _btnWakeConnect.Glyph = Theme.Glyph.Play;
-        _btnWakeConnect.Text = "PC 켜고 접속";
-        _btnWakeConnect.Click += (_, _) => ShowModePopup(wakeFirst: true);
-        _tips.SetToolTip(_btnWakeConnect, "누르면 일반/VPN 접속을 고릅니다. 고른 뒤 PC를 켜고 부팅을 기다려 원격 데스크톱까지 한 번에 진행합니다. (Ctrl+Enter)");
-
-        _btnWake.Text = "PC 켜기";
+        _btnWake.Text = "PC 켜기만";
         _btnWake.Glyph = Theme.Glyph.Power;
+        _btnWake.Variant = ButtonVariant.Ghost;
         _btnWake.Click += (_, _) => _ = RunWakeAsync(skipNavigation: false);
-        _tips.SetToolTip(_btnWake, "공유기 WOL로 PC만 켭니다.");
-
-        _btnConnect.Text = "PC 접속";
-        _btnConnect.Glyph = Theme.Glyph.Connect;
-        _btnConnect.Click += (_, _) => ShowModePopup(wakeFirst: false);
-        // 사인 곡선이라 양 끝에서 머물고 가운데에서 빨라져 '숨 쉬듯' 보인다.
-        _blinkTimer.Tick += (_, _) =>
-        {
-            var level = (1 - Math.Cos(2 * Math.PI * (_blinkClock.Elapsed.TotalSeconds / BlinkPeriod.TotalSeconds))) / 2;
-            if (_blinkConnectOn) _btnConnect.AttentionLevel = level;
-            if (_blinkRouterOn) _btnToggle.AttentionLevel = level;
-        };
-        _tips.SetToolTip(_btnConnect, "이미 켜진 PC에 바로 접속합니다. 누르면 일반/VPN 접속을 고릅니다. (Ctrl+Shift+Enter)");
+        _tips.SetToolTip(_btnWake, "공유기 WOL로 PC만 켭니다. 접속은 하지 않습니다.");
 
         _btnCancel.Text = "취소";
         _btnCancel.Glyph = Theme.Glyph.Cancel;
@@ -308,7 +387,7 @@ public sealed class MainForm : Form
         _btnLog.Click += (_, _) => SetLogVisible(!_logVisible);
         _tips.SetToolTip(_btnLog, "자세한 기록을 보이거나 숨깁니다. (Ctrl+L)");
 
-        _actions.Controls.AddRange(new Control[] { _btnWakeConnect, _btnWake, _btnConnect, _btnCancel, _btnToggle, _btnLog });
+        _actions.Controls.AddRange(new Control[] { _btnWake, _btnCancel, _btnToggle, _btnLog });
         _actions.Resize += (_, _) => LayoutActions();
 
         // --- 위쪽 묶음(Dock=Top은 나중에 추가한 것이 위로 온다)
@@ -316,6 +395,8 @@ public sealed class MainForm : Form
         _topArea.Controls.Add(_actions);
         _topArea.Controls.Add(Spacer(10));
         _topArea.Controls.Add(_banner);
+        _topArea.Controls.Add(Spacer(10));
+        _topArea.Controls.Add(_connectCard);
         _topArea.Controls.Add(Spacer(10));
         _topArea.Controls.Add(_stepCard);
         _topArea.Controls.Add(Spacer(8));
@@ -347,24 +428,87 @@ public sealed class MainForm : Form
     {
         _topArea.Padding = new Padding(L(16), L(12), L(16), L(10));
         _header.Height = L(44);
-        _stepCard.Height = L(84);
-        _banner.Height = L(54);
         _actions.Height = L(40);
         _logPanel.Height = L(LogicalLogHeight);
-        foreach (Control c in _topArea.Controls)
-            if (c.Tag as string == "spacer") c.Height = c.Height; // 이미 L() 적용
-        var h = _topArea.Padding.Vertical;
-        foreach (Control c in _topArea.Controls) h += c.Height;
-        _topArea.Height = h;
         _logPanel.Visible = _logVisible;
+        Relayout();
+    }
+
+    /// <summary>카드가 쓸 수 있는 가로 폭.</summary>
+    private int InnerWidth => Math.Max(L(320), ClientSize.Width - _topArea.Padding.Horizontal);
+
+    /// <summary>
+    /// 폭에 맞춰 카드 높이를 다시 재고 창 높이를 내용에 맞춘다.
+    /// 폭이 좁아지면 단계 칸이 2x2로, 접속 카드가 한 열로 접히면서 높이가 늘어난다.
+    /// </summary>
+    private void Relayout()
+    {
+        if (_layouting || IsDisposed) return;
+        _layouting = true;
+        try
+        {
+            var inner = InnerWidth;
+
+            _hero.Height = _hero.PreferredHeight();
+            _stepper.Height = _stepper.PreferredHeight(inner - _stepCard.Padding.Horizontal);
+            _stepCard.Height = _stepCard.Padding.Vertical + _hero.Height + L(16) + _stepper.Height;
+
+            var connInner = inner - _connectCard.Padding.Horizontal;
+            _methods.Height = Math.Max(L(10), _methods.PreferredHeight(connInner));
+            _methodsEmpty.Height = L(104);
+            _connectCard.Height = _connectCard.Padding.Vertical + L(26)
+                + (_methodsEmpty.Visible ? _methodsEmpty.Height : _methods.Height);
+
+            _banner.Height = _banner.PreferredHeight(inner);
+
+            var h = _topArea.Padding.Vertical;
+            foreach (Control c in _topArea.Controls) if (c.Visible) h += c.Height;
+            _topArea.Height = h;
+
+            LayoutCards();
+            ApplyWindowHeight();
+        }
+        finally
+        {
+            _layouting = false;
+        }
+    }
+
+    /// <summary>카드 안쪽 조각들을 제자리에 놓는다(Dock 대신 직접 계산한다).</summary>
+    private void LayoutCards()
+    {
+        var p = _stepCard.Padding;
+        var w = Math.Max(L(100), _stepCard.Width - p.Horizontal);
+        _hero.Bounds = new Rectangle(p.Left, p.Top, w, _hero.Height);
+        _stepper.Bounds = new Rectangle(p.Left, p.Top + _hero.Height + L(16), w, _stepper.Height);
+
+        var cp = _connectCard.Padding;
+        var cw = Math.Max(L(100), _connectCard.Width - cp.Horizontal);
+        _connectTitle.Location = new Point(cp.Left, cp.Top);
+        _connectHint.Location = new Point(cp.Left + _connectTitle.Width + L(10), cp.Top + L(3));
+        var bodyY = cp.Top + L(26);
+        _methods.Bounds = new Rectangle(cp.Left, bodyY, cw, _methods.Height);
+        _methodsEmpty.Bounds = new Rectangle(cp.Left, bodyY, cw, _methodsEmpty.Height);
+        _methods.Relayout();
+    }
+
+    private void LayoutEmptyMethods()
+    {
+        var pad = L(16);
+        var w = _methodsEmpty.Width;
+        _btnSetupMethods.Size = new Size(Math.Max(L(150), _btnSetupMethods.PreferredWidth()), L(40));
+        _btnSetupMethods.Location = new Point(Math.Max(pad, w - pad - _btnSetupMethods.Width), L(32));
+        var textW = Math.Max(L(120), _btnSetupMethods.Left - pad - L(16));
+        _emptyTitle.Bounds = new Rectangle(pad, L(14), textW, L(22));
+        _emptyBody.Bounds = new Rectangle(pad, L(38), textW, L(46));
     }
 
     /// <summary>메인 창 내용 높이(위쪽 묶음 + 보이는 경우 기록 창).</summary>
     private int ContentHeight => _topArea.Height + (_logVisible ? _logPanel.Height : 0);
 
     /// <summary>
-    /// 창 높이를 현재 표시 상태에 맞춘다.
-    /// 공유기 화면이 별도 창으로 빠져 메인 창은 늘 내용 높이에 고정된다.
+    /// 창 높이를 현재 내용에 맞춘다. 가로는 사용자가 줄일 수 있고(최소 680),
+    /// 줄이면 Relayout이 칸을 접으면서 높이를 다시 잡는다.
     /// </summary>
     private void ApplyWindowHeight()
     {
@@ -374,8 +518,8 @@ public sealed class MainForm : Form
         SuspendLayout();
         // 크기 제한을 먼저 풀어야 새 높이가 적용된다.
         MaximumSize = Size.Empty;
-        MinimumSize = new Size(L(1040), contentWindowHeight);
-        ClientSize = new Size(ClientSize.Width, ContentHeight);
+        MinimumSize = new Size(L(LogicalMinWidth), contentWindowHeight);
+        if (ClientSize.Height != ContentHeight) ClientSize = new Size(ClientSize.Width, ContentHeight);
         // 너비는 제한하지 않는다(0을 넣으면 WinForms가 최소 창 너비로 고정한다).
         MaximumSize = new Size(short.MaxValue, contentWindowHeight);
         ResumeLayout(true);
@@ -394,11 +538,24 @@ public sealed class MainForm : Form
         _btnExit.Location = new Point(right - _btnExit.Width, L(4));
         _btnMore.Location = new Point(_btnExit.Left - _btnMore.Width - L(8), L(4));
         _btnSettings.Location = new Point(_btnMore.Left - _btnSettings.Width - L(2), L(4));
-        var pillsWidth = _routerPill.Width + (_vpnPill.Visible ? _vpnPill.Width + L(8) : 0)
-            + (_powerPill.Visible ? _powerPill.Width + L(8) : 0) + L(12);
+        _btnMini.Location = new Point(_btnSettings.Left - _btnMini.Width - L(2), L(4));
+
+        // 창을 좁히면 배지가 버튼 위로 올라타지 않도록 덜 중요한 것부터 숨긴다(공유기 > PC 전원 > VPN).
+        var room = Math.Max(0, _btnMini.Left - L(8) - (_title.Right + L(12)));
+        _vpnPill.Visible = _vpnPillWanted;
+        _powerPill.Visible = _powerPillWanted;
+        if (PillsWidth() > room && _vpnPill.Visible) _vpnPill.Visible = false;
+        if (PillsWidth() > room && _powerPill.Visible) _powerPill.Visible = false;
+        var pillsWidth = PillsWidth();
         _pills.Size = new Size(pillsWidth, L(40));
-        _pills.Location = new Point(_btnSettings.Left - pillsWidth - L(8), L(2));
+        _pills.Location = new Point(Math.Max(_title.Right + L(12), _btnMini.Left - pillsWidth - L(8)), L(2));
     }
+
+    private int PillsWidth() =>
+        _routerPill.Width
+        + (_vpnPill.Visible ? _vpnPill.Width + L(8) : 0)
+        + (_powerPill.Visible ? _powerPill.Width + L(8) : 0)
+        + L(12);
 
     private void LayoutActions()
     {
@@ -412,9 +569,7 @@ public sealed class MainForm : Form
             b.Location = new Point(x, 0);
             x += b.Width + gap;
         }
-        Place(_btnWakeConnect, L(200));
-        Place(_btnWake, L(104));
-        Place(_btnConnect, L(112));
+        Place(_btnWake, L(116));
 
         var rx = _actions.Width;
         void PlaceRight(FlatButton b)
@@ -460,39 +615,333 @@ public sealed class MainForm : Form
         };
     }
 
+    // ============================================================ 접속 방식 카드
+
+    /// <summary>PC가 꺼져 있어(또는 응답이 없어) 접속 전에 먼저 켜야 하는 상태인지.</summary>
+    private bool WakeBeforeConnect =>
+        _power.Status.State != PcPowerState.On
+        && _power.Status.State != PcPowerState.Disabled
+        && _browser.Session.IsLoggedIn;
+
     /// <summary>
-    /// 접속 방식 선택 팝업을 연다([PC 켜고 접속]·[PC 접속]을 누를 때마다).
-    /// 방식마다 필요한 설정만 검사하며, 설정이 비어 있는 방식은 선택할 수 없게 표시한다.
+    /// 접속 방식 카드를 만든다. 지난번에 쓴 방식이 맨 위 주 카드가 되고 나머지는 아래에 작게 놓인다.
+    /// 카드를 누르는 것이 곧 접속이다(따로 고르는 팝업이 없다).
     /// </summary>
-    public ModePopup? ShowModePopup(bool wakeFirst)
+    private void BuildMethodCards()
     {
-        if (_busy || _exiting) return null;
-        if (wakeFirst && !_browser.Session.IsLoggedIn) return null;
-        if (_preparingAdmin && _browser.Session.IsLoggedIn) return null;
-        _modePopup?.Close();
-        var anchor = wakeFirst ? _btnWakeConnect : _btnConnect;
-        var heading = wakeFirst ? "PC를 켠 뒤 접속할 방식" : "접속 방식";
-        var popup = new ModePopup(heading, ModeOptions.For(_settings), _settings.LastMode);
-        popup.Chosen += mode =>
+        _methods.Clear();
+        var options = ModeOptions.For(_settings);
+        // 지난번에 쓴 방식을 맨 앞으로. 그 외 순서는 그대로 둔다(번호가 흔들리지 않게).
+        var ordered = options.OrderByDescending(o => o.Mode == _settings.LastMode).ToList();
+        var number = 0;
+        foreach (var o in ordered)
         {
-            _settings.LastConnectMode = mode switch { ConnectMode.Vpn => "vpn", ConnectMode.Crd => "crd", _ => "direct" };
-            if (!_options.SelfTest) TrySaveSettings();
-            if (wakeFirst) _ = RunWakeAndConnectAsync(mode);
-            else _ = RunConnectAsync(mode);
-        };
-        popup.FormClosed += (_, _) => { if (ReferenceEquals(_modePopup, popup)) _modePopup = null; };
-        _modePopup = popup;
-        popup.ShowBelow(this, anchor);
-        return popup;
+            number++;
+            var card = new MethodCard
+            {
+                Mode = o.Mode,
+                Primary = number == 1,
+                Badge = number,
+                Glyph = o.Mode switch
+                {
+                    ConnectMode.Vpn => Theme.Glyph.Lock,
+                    ConnectMode.Crd => Theme.Glyph.Remote,
+                    _ => Theme.Glyph.Globe,
+                },
+                GlyphImage = o.Mode == ConnectMode.Crd ? CrdIcon.Current : null,
+            };
+            card.Click += (_, _) => ConnectWith(card.Mode);
+            _methods.Add(card);
+
+        }
+        RefreshMethods();
     }
 
-    public ModePopup? CurrentModePopup => _modePopup;
+    /// <summary>카드의 글·주소·사용 가능 여부를 지금 설정과 전원 상태에 맞춘다.</summary>
+    private void RefreshMethods()
+    {
+        if (_methods.Cards.Count == 0) return;
+        var wake = WakeBeforeConnect;
+        var anyConfigured = false;
+        var bootFailed = _flow.FailedStep is { } f && ReferenceEquals(f, _flow.Boot);
+        foreach (var card in _methods.Cards)
+        {
+            var o = ModeOptions.Build(_settings, card.Mode);
+            // 앱을 새로 설치했을 수 있으니 아이콘은 그릴 때마다 지금 것을 쓴다.
+            card.GlyphImage = card.Mode == ConnectMode.Crd ? CrdIcon.Current : null;
+            // PC가 꺼져 있으면 글자가 저절로 "PC 켜고 ..."로 바뀐다. 따로 외워야 할 모드가 없다.
+            card.Title = o.Enabled && wake ? "PC 켜고 " + o.Title : o.Title;
+            card.Detail = o.Detail;
+            card.Enabled = o.Enabled && (wake ? _gate.WakeConnect : _gate.Connect);
+            card.Tagline = !o.Enabled ? ""
+                : card.Mode == ConnectMode.Crd && bootFailed ? "포트 없이 접속"
+                : card.Mode == _settings.LastMode && _methods.Cards.Count > 1 ? "지난번"
+                : "";
+            if (!card.Enabled) card.AttentionLevel = 0;
+            if (o.Enabled) anyConfigured = true;
+            card.AccessibleName = card.Badge + ". " + card.Title + ", " + card.Detail;
+            // 좁은 카드에서 주소가 잘릴 수 있으니 전체 글은 풍선 도움말로도 보여 준다.
+            _tips.SetToolTip(card, card.Title + "\n" + card.Detail + "\n" + card.Badge + " 키로도 고를 수 있습니다.");
+        }
+        _methods.Visible = anyConfigured;
+        _methodsEmpty.Visible = !anyConfigured;
+        _connectHint.Text = !anyConfigured ? ""
+            : _exiting ? "종료하는 중입니다"
+            : _busy ? "진행 중입니다 — 끝나면 다시 고를 수 있습니다"
+            : !_gate.Connect ? "잠시 기다려 주세요"
+            : !wake ? "카드를 누르면 바로 접속합니다"
+            : _power.Status.State == PcPowerState.NoAnswer ? "PC가 응답하지 않아 먼저 켠 뒤 접속합니다"
+            : "PC 전원을 확인하기 전이라 먼저 켠 뒤 접속합니다";
+    }
+
+    /// <summary>
+    /// 카드를 누른 것과 같은 동작(자체검사에서도 쓴다).
+    /// PC가 꺼져 있으면 먼저 켜고, 켜져 있으면 바로 접속한다.
+    /// </summary>
+    public bool ConnectWith(ConnectMode mode, bool? wakeFirst = null)
+    {
+        if (_busy || _exiting) return false;
+        if (!ModeOptions.Build(_settings, mode).Enabled) return false;
+        var wake = wakeFirst ?? WakeBeforeConnect;
+        if (wake ? !_gate.WakeConnect : !_gate.Connect) return false;
+        _lastTried = mode;
+        _settings.LastConnectMode = mode switch { ConnectMode.Vpn => "vpn", ConnectMode.Crd => "crd", _ => "direct" };
+        if (!_options.SelfTest) TrySaveSettings();
+        if (wake) _ = RunWakeAndConnectAsync(mode);
+        else _ = RunConnectAsync(mode);
+        return true;
+    }
 
     /// <summary>접속 방식 선택지 상태(자체검사에서도 사용).</summary>
+    /// <summary>자체검사용: 설정을 바꾼 뒤 화면을 다시 그린다.</summary>
+    public void RefreshUiForTest() => RefreshUi();
+
+    /// <summary>자체검사용: 접속 방식 카드를 설정에 맞춰 다시 만든다.</summary>
+    public void RebuildMethodsForTest()
+    {
+        BuildMethodCards();
+        RefreshUi();
+    }
+
     public ModeOption ModeOptionState(ConnectMode mode) => ModeOptions.Build(_settings, mode);
 
     /// <summary>지금 설정에서 보이는 접속 방식 수(자체검사에서도 사용).</summary>
     public int ModeOptionCount => ModeOptions.For(_settings).Count;
+
+    // ============================================================ 히어로 카드
+
+    private enum HeroActionKind { None, Cancel, Retry, Router, CheckPower }
+
+    /// <summary>
+    /// 큰 카드 한 줄로 "지금 무슨 상태인가"를 말한다. 아래 4단계는 그 근거다.
+    /// 진행 중에는 파랑 + 진행 막대 + [취소], 실패하면 빨강 + [다시 시도]가 된다.
+    /// </summary>
+    private void RefreshHero()
+    {
+        var p = Theme.Current;
+        var power = _power.Status;
+        var active = _flow.ActiveStep;
+        var failed = _flow.FailedStep;
+        string glyph, title, sub, action;
+        Color accent;
+        double? progress = null;
+        var meta = "";
+
+        if (_exiting)
+        {
+            glyph = Theme.Glyph.Exit;
+            accent = p.Muted;
+            title = "종료하는 중입니다";
+            sub = "공유기에서 로그아웃한 뒤 창을 닫습니다. VPN 연결은 그대로 둡니다.";
+            action = "";
+        }
+        else if (_busy)
+        {
+            glyph = Theme.Glyph.Sync;
+            accent = p.Info;
+            title = _wakeRunning ? "PC를 켜는 중입니다" : "접속하는 중입니다";
+            sub = active is null ? "진행 중" : active.Title + " · " + active.Detail;
+            progress = active?.Progress ?? 0;
+            action = "취소";
+        }
+        else if (failed != null)
+        {
+            glyph = Theme.Glyph.Error;
+            accent = p.Danger;
+            title = ReferenceEquals(failed, _flow.Wake) ? "PC를 켜지 못했습니다"
+                : ReferenceEquals(failed, _flow.Boot) ? "PC가 응답하지 않습니다"
+                : ReferenceEquals(failed, _flow.Remote) ? "원격 데스크톱을 열지 못했습니다"
+                : "공유기에 로그인하지 못했습니다";
+            sub = failed.Title + " · " + failed.Detail;
+            action = "다시 시도";
+        }
+        else if (!_browser.Session.IsLoggedIn)
+        {
+            var loggedOut = _browser.Session.State == SessionState.LoggedOut;
+            glyph = Theme.Glyph.Router;
+            accent = loggedOut ? p.Warning : p.Muted;
+            title = loggedOut ? "공유기 로그인이 필요합니다" : "공유기를 확인하는 중입니다";
+            sub = loggedOut
+                ? "공유기 창에서 로그인하면 창이 저절로 닫힙니다. 켜진 PC에는 로그인 없이도 접속할 수 있습니다."
+                : "공유기 관리 세션이 살아 있는지 확인하고 있습니다.";
+            action = loggedOut ? "공유기 화면" : "";
+        }
+        else if (_preparingAdmin)
+        {
+            glyph = Theme.Glyph.Sync;
+            accent = p.Info;
+            title = "관리 화면을 준비하는 중입니다";
+            sub = "[관리도구]를 고르고 WOL 화면까지 들어가는 중입니다.";
+            action = "";
+        }
+        else if (_flow.Remote.State == StepState.Done)
+        {
+            glyph = Theme.Glyph.Check;
+            accent = p.Success;
+            title = "원격 접속을 열었습니다";
+            sub = _flow.Remote.Detail + " · 다시 접속하려면 아래 카드를 누르세요.";
+            action = power.State == PcPowerState.Disabled ? "" : "지금 확인";
+        }
+        else
+        {
+            var on = power.State == PcPowerState.On;
+            glyph = on ? Theme.Glyph.Power : Theme.Glyph.Connect;
+            accent = on ? p.Accent : p.Info;
+            title = power.State switch
+            {
+                PcPowerState.NoAnswer => "PC가 응답하지 않습니다",
+                PcPowerState.Checking => "PC 전원을 확인하는 중입니다",
+                _ => "접속할 준비가 됐습니다",
+            };
+            sub = power.State switch
+            {
+                PcPowerState.On => "공유기 로그인됨 · PC 켜짐 — 아래 카드를 누르면 접속합니다",
+                PcPowerState.NoAnswer => "꺼져 있거나 포트가 막혀 있습니다. 카드를 누르면 PC를 켜고 접속합니다.",
+                PcPowerState.Disabled => "공유기 로그인됨 — 아래 카드를 누르면 접속합니다",
+                _ => "공유기 로그인됨 · PC 전원 확인 중",
+            };
+            action = power.State == PcPowerState.Disabled ? "" : "지금 확인";
+        }
+
+        _heroAction = action switch
+        {
+            "취소" => HeroActionKind.Cancel,
+            "다시 시도" => HeroActionKind.Retry,
+            "공유기 화면" => HeroActionKind.Router,
+            "지금 확인" => HeroActionKind.CheckPower,
+            _ => HeroActionKind.None,
+        };
+        if (_heroAction == HeroActionKind.CheckPower && power.CheckedAt is { } at) meta = "마지막 확인 " + at.ToString("HH:mm");
+
+        _btnHeroAction.Visible = action.Length > 0;
+        if (action.Length > 0)
+        {
+            _btnHeroAction.Text = action;
+            _btnHeroAction.Glyph = _heroAction switch
+            {
+                HeroActionKind.Cancel => Theme.Glyph.Cancel,
+                HeroActionKind.Retry => Theme.Glyph.Sync,
+                HeroActionKind.Router => Theme.Glyph.Router,
+                _ => Theme.Glyph.Refresh,
+            };
+            _btnHeroAction.Variant = _heroAction == HeroActionKind.Cancel ? ButtonVariant.Danger
+                : _heroAction == HeroActionKind.Retry ? ButtonVariant.Primary
+                : ButtonVariant.Secondary;
+            _btnHeroAction.Size = new Size(Math.Max(L(96), _btnHeroAction.PreferredWidth()), L(34));
+        }
+        _hero.Set(glyph, accent, title, sub, meta, progress);
+    }
+
+    private void OnHeroAction()
+    {
+        switch (_heroAction)
+        {
+            case HeroActionKind.Cancel:
+                CancelOperation();
+                break;
+            case HeroActionKind.Retry:
+                RetryLast();
+                break;
+            case HeroActionKind.Router:
+                SetBrowserExpanded(true);
+                break;
+            case HeroActionKind.CheckPower:
+                _ = _power.CheckNowAsync();
+                break;
+        }
+    }
+
+    /// <summary>마지막으로 시도한 방식으로 한 번 더. 설정이 비어 있으면 설정 창을 연다.</summary>
+    private void RetryLast()
+    {
+        var mode = _lastTried ?? _settings.LastMode;
+        if (!ModeOptions.Build(_settings, mode).Enabled)
+        {
+            OpenSettings();
+            return;
+        }
+        ConnectWith(mode);
+    }
+
+    /// <summary>
+    /// 실패했을 때 무엇을 눌러야 하는지를 알림줄 안에 둔다
+    /// (화면 밖에서 설정을 찾아 헤매지 않도록).
+    /// </summary>
+    private void RefreshBannerActions()
+    {
+        var failed = _flow.FailedStep;
+        if (_busy || _exiting || failed == null)
+        {
+            _banner.SetActions();
+            return;
+        }
+        if (ReferenceEquals(failed, _flow.Boot) || ReferenceEquals(failed, _flow.Remote))
+            _banner.SetActions(
+                ("다시 시도", true, (Action)RetryLast),
+                ("포트 설정 열기", false, OpenSettings),
+                ("진단 내보내기", false, () => _ = ExportDiagnosticsAsync()));
+        else
+            _banner.SetActions(
+                ("다시 시도", true, (Action)RetryLast),
+                ("진단 내보내기", false, () => _ = ExportDiagnosticsAsync()));
+    }
+
+    // ============================================================ 미니 모드
+
+    /// <summary>작은 창으로 접거나 큰 창으로 되돌린다.</summary>
+    public void SetMiniMode(bool on)
+    {
+        if (on)
+        {
+            if (_mini == null)
+            {
+                _mini = new MiniWindow();
+                _mini.ConnectRequested += () =>
+                {
+                    SetMiniMode(false);
+                    ConnectWith(_methods.Cards.Count > 0 ? _methods.Cards[0].Mode : _settings.LastMode);
+                };
+                _mini.RestoreRequested += () => SetMiniMode(false);
+            }
+            RefreshMini();
+            _mini.ShowNear(this);
+            Hide();
+        }
+        else
+        {
+            _mini?.Hide();
+            if (!Visible) Show();
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Activate();
+        }
+    }
+
+    private void RefreshMini()
+    {
+        if (_mini == null) return;
+        var primary = _methods.Cards.Count > 0 ? _methods.Cards[0] : null;
+        _mini.Show(_power.Status, _settings.WolPcName.Trim(), primary is { Enabled: true }, primary?.Title ?? "접속");
+    }
 
     private void HookEvents()
     {
@@ -501,14 +950,22 @@ public sealed class MainForm : Form
             if (IsDisposed || !IsHandleCreated) return;
             try { BeginInvoke(new Action(() => AppendLog(e))); } catch { /* closing */ }
         };
-        _flow.Changed += () => SafeInvoke(() => _stepper.SetSteps(_flow.Steps));
+        _flow.Changed += () => SafeInvoke(() =>
+        {
+            _stepper.SetSteps(_flow.Steps);
+            RefreshHero();
+            RefreshBannerActions();
+            Relayout();
+        });
         _sessionTimer.Tick += async (_, _) => { if (_initDone && !_busy) await ProbeSessionNowAsync(); };
         _uiTimer.Tick += (_, _) => OnUiTick();
         Theme.Changed += OnThemeChanged;
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
         HandleCreated += (_, _) => Theme.ApplyTitleBar(this);
         Shown += (_, _) => { _uiTimer.Start(); _ = InitializeAsync(); };
-        DpiChanged += (_, _) => { ApplyLayoutMetrics(); LayoutHeader(); LayoutActions(); ApplyWindowHeight(); };
+        DpiChanged += (_, _) => { ApplyLayoutMetrics(); LayoutHeader(); LayoutActions(); };
+        // 폭을 줄이면 단계 칸과 방식 카드가 접히면서 높이가 달라진다.
+        Resize += (_, _) => { if (WindowState != FormWindowState.Minimized) Relayout(); };
         FormClosing += (_, e) =>
         {
             // 창의 X로 닫을 때: 작업 중이면 한 번 묻는다. (공유기 로그아웃은 [종료] 버튼에서만 한다)
@@ -522,7 +979,7 @@ public sealed class MainForm : Form
                     return;
                 }
             }
-            _modePopup?.Close();
+            _mini?.Close();
             _sessionTimer.Stop();
             _uiTimer.Stop();
             _opCts?.Cancel();
@@ -544,13 +1001,27 @@ public sealed class MainForm : Form
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
+        // 1·2·3: 그 번호의 접속 방식 카드를 바로 실행한다(기록 창에 입력 중일 때는 넘긴다).
+        if (ActiveControl is not TextBoxBase
+            && keyData is Keys.D1 or Keys.D2 or Keys.D3 or Keys.NumPad1 or Keys.NumPad2 or Keys.NumPad3)
+        {
+            var index = keyData is Keys.D1 or Keys.NumPad1 ? 0 : keyData is Keys.D2 or Keys.NumPad2 ? 1 : 2;
+            if (index < _methods.Cards.Count && _methods.Cards[index].Enabled)
+            {
+                ConnectWith(_methods.Cards[index].Mode);
+                return true;
+            }
+        }
         switch (keyData)
         {
-            case Keys.Control | Keys.Enter when _btnWakeConnect.Enabled:
-                ShowModePopup(wakeFirst: true);
+            case Keys.Control | Keys.Enter when _gate.WakeConnect && PrimaryMethod is { Enabled: true } p1:
+                ConnectWith(p1.Mode, wakeFirst: true);
                 return true;
-            case Keys.Control | Keys.Shift | Keys.Enter when _btnConnect.Enabled:
-                ShowModePopup(wakeFirst: false);
+            case Keys.Control | Keys.Shift | Keys.Enter when _gate.Connect && PrimaryMethod is { Enabled: true } p2:
+                ConnectWith(p2.Mode, wakeFirst: false);
+                return true;
+            case Keys.Control | Keys.M:
+                SetMiniMode(_mini is not { Visible: true });
                 return true;
             case Keys.Control | Keys.Q:
                 _ = ExitWithLogoutAsync();
@@ -607,6 +1078,15 @@ public sealed class MainForm : Form
         _txtLog.ForeColor = p.LogText;
         _txtLog.BorderStyle = BorderStyle.FixedSingle;
         _stepCard.ApplyTheme();
+        _connectCard.ApplyTheme();
+        // 카드 안쪽 조각들은 카드 바탕색을 그대로 따라가야 한다(테마를 바꾸면 예전 색이 남는다).
+        foreach (var c in new Control[] { _methods, _methodsEmpty, _connectTitle, _connectHint, _emptyTitle, _emptyBody })
+            c.BackColor = p.Surface;
+        _connectTitle.ForeColor = p.Text;
+        _emptyTitle.ForeColor = p.Text;
+        _connectHint.ForeColor = p.SubText;
+        _emptyBody.ForeColor = p.SubText;
+        _mini?.ApplyTheme();
         _moreMenu.BackColor = p.Surface;
         Theme.ApplyTitleBar(this);
         RefreshPills();
@@ -664,9 +1144,8 @@ public sealed class MainForm : Form
         var loggedIn = _browser.Session.IsLoggedIn;
         var idle = !_busy && !_exiting;
         var gate = ActionGate.Compute(loggedIn, _busy, _exiting, _preparingAdmin);
+        _gate = gate;
         _btnWake.Enabled = gate.Wake;
-        _btnWakeConnect.Enabled = gate.WakeConnect;
-        _btnConnect.Enabled = gate.Connect;
         _btnSettings.Enabled = idle;
         _btnMore.Enabled = !_exiting;
         _btnExit.Enabled = !_exiting;
@@ -679,8 +1158,13 @@ public sealed class MainForm : Form
         _btnToggle.Glyph = _routerWindow.Visible ? Theme.Glyph.Cancel : Theme.Glyph.Router;
         _btnLog.Text = _logVisible ? "기록 숨기기" : "기록";
         RefreshPills();
-        LayoutActions();
+        RefreshMethods();
         _stepper.SetSteps(_flow.Steps);
+        RefreshHero();
+        RefreshBannerActions();
+        LayoutActions();
+        Relayout();
+        RefreshMini();
     }
 
     /// <summary>
@@ -691,9 +1175,10 @@ public sealed class MainForm : Form
     private void RefreshAttentionBlink()
     {
         var setting = _settings.BlinkAttentionButtons;
-        _blinkConnectOn = ActionGate.ShouldBlinkConnect(setting, _power.Status.State, _btnConnect.Enabled, _busy, _exiting);
+        var primary = PrimaryMethod;
+        _blinkConnectOn = primary != null && ActionGate.ShouldBlinkConnect(setting, _power.Status.State, primary.Enabled, _busy, _exiting);
         _blinkRouterOn = ActionGate.ShouldBlinkRouter(setting, _browser.Session.State, _routerWindow.Visible, _busy, _exiting);
-        if (!_blinkConnectOn) _btnConnect.AttentionLevel = 0;
+        if (!_blinkConnectOn && primary != null) primary.AttentionLevel = 0;
         if (!_blinkRouterOn) _btnToggle.AttentionLevel = 0;
         var any = _blinkConnectOn || _blinkRouterOn;
         if (any == _blinkTimer.Enabled) return;
@@ -732,6 +1217,7 @@ public sealed class MainForm : Form
         }
 
         var vpnConfigured = InputRules.IsValidVpnName(_settings.VpnName);
+        _vpnPillWanted = vpnConfigured;
         _vpnPill.Visible = vpnConfigured;
         if (vpnConfigured)
         {
@@ -741,8 +1227,9 @@ public sealed class MainForm : Form
             else _vpnPill.Set("VPN 확인 전", p.Muted, Theme.Glyph.Lock);
         }
         var power = _power.Status;
-        _powerPill.Visible = power.State != PcPowerState.Disabled;
-        if (_powerPill.Visible)
+        _powerPillWanted = power.State != PcPowerState.Disabled;
+        _powerPill.Visible = _powerPillWanted;
+        if (_powerPillWanted)
         {
             var color = power.State switch
             {
@@ -1282,7 +1769,7 @@ public sealed class MainForm : Form
     public async Task<RouterBrowser.LogoutResult> PrepareExitAsync()
     {
         _exiting = true;
-        _modePopup?.Close();
+        if (_mini is { Visible: true }) SetMiniMode(false); // 종료 상태는 큰 창에서 보여 준다
         _settleCts?.Cancel();
         RefreshUi();
         if (_busy)

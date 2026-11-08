@@ -297,7 +297,7 @@ public class CrdUiModelTests
     public void Crd_option_detail_says_what_will_happen()
     {
         var s = Settings();
-        Assert.Equal("저장된 기기로 바로 연결 · 부팅 확인 없음", ModeOptions.Build(s, ConnectMode.Crd).Detail);
+        Assert.Equal("저장된 기기로 연결 · 부팅 확인 없음", ModeOptions.Build(s, ConnectMode.Crd).Detail);
         s.CrdHostId = "";
         Assert.Equal("브라우저에서 기기 고르기 · 부팅 확인 없음", ModeOptions.Build(s, ConnectMode.Crd).Detail);
         s.CrdBootCheckMode = "direct";

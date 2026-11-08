@@ -39,6 +39,26 @@ public sealed class StepperControl : Control
         _ => p.Muted,
     };
 
+    /// <summary>이 폭 아래로는 2칸씩 두 줄로 접는다.</summary>
+    public const int FourColumnMinWidth = 860;
+
+    /// <summary>지금 폭에서 한 줄에 몇 칸이 들어가는지(자체검사용).</summary>
+    public int ColumnCount => Columns(Width);
+
+    private int Columns(int width) => _steps.Count <= 2 || width < Drawing.Scale(this, FourColumnMinWidth) ? 2 : 4;
+
+    private int CardHeight() => (int)Drawing.Scale(this, 64);
+
+    /// <summary>주어진 폭에서 필요한 높이(칸이 몇 줄로 접히는지에 따라 달라진다).</summary>
+    public int PreferredHeight(int width)
+    {
+        if (_steps.Count == 0) return 0;
+        var gap = (int)Drawing.Scale(this, 10);
+        var cols = Columns(width);
+        var rows = (_steps.Count + cols - 1) / cols;
+        return rows * CardHeight() + (rows - 1) * gap;
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         var p = Theme.Current;
@@ -48,52 +68,44 @@ public sealed class StepperControl : Control
         if (_steps.Count == 0) return;
 
         float S(float v) => Drawing.Scale(this, v);
-        var pad = S(16);
-        var colW = (Width - pad * 2) / _steps.Count;
-        var d = S(26);
-        var cy = S(14) + d / 2;
-
-        // 연결선: 글자와 겹치지 않도록 제목·세부 문구가 끝난 뒤부터 다음 원 앞까지만 그린다.
-        var titleFont = Theme.UiFont(10f, FontStyle.Bold);
-        var detailFont = Theme.UiFont(9f);
-        for (var i = 0; i < _steps.Count - 1; i++)
-        {
-            var textX = pad + i * colW + d + S(10);
-            var maxText = colW - d - S(18);
-            var textW = Math.Min(maxText, Math.Max(Drawing.MeasureText(_steps[i].Title, titleFont).Width, Drawing.MeasureText(_steps[i].Detail, detailFont).Width));
-            var x1 = textX + textW + S(12);
-            var x2 = pad + (i + 1) * colW - S(10);
-            if (x2 - x1 < S(16)) continue;
-            var done = _steps[i].State == StepState.Done;
-            using var pen = new Pen(done ? p.Success : p.Border, S(2));
-            g.DrawLine(pen, x1, cy, x2, cy);
-        }
+        var gap = (int)S(10);
+        var cols = Columns(Width);
+        var rows = (_steps.Count + cols - 1) / cols;
+        var cardH = CardHeight();
+        var colW = (Width - gap * (cols - 1)) / (float)cols;
 
         for (var i = 0; i < _steps.Count; i++)
         {
             var st = _steps[i];
-            var x = pad + i * colW;
+            var col = i % cols;
+            var row = i / cols;
+            var x = col * (colW + gap);
+            var y = row * (cardH + gap);
             var color = StateColor(p, st.State);
-            var circle = new RectangleF(x, cy - d / 2, d, d);
+            var lit = st.State != StepState.Pending;
 
-            if (st.State is StepState.Pending)
+            var r = new RectangleF(x + 0.5f, y + 0.5f, colW - 1.5f, cardH - 1.5f);
+            using (var path = Drawing.RoundedRect(r, S(10)))
+            using (var fill = new SolidBrush(lit ? Theme.Blend(p.Surface, color, 0.13) : Theme.Blend(p.Background, p.Surface, 0.7)))
+            using (var pen = new Pen(lit ? Theme.Blend(p.Border, color, 0.65) : p.Border))
             {
-                using var pen = new Pen(p.Border, S(1.5f));
-                using var fill = new SolidBrush(p.SurfaceAlt);
-                g.FillEllipse(fill, circle);
-                g.DrawEllipse(pen, circle);
+                g.FillPath(fill, path);
+                g.DrawPath(pen, path);
             }
-            else if (st.State == StepState.Active)
+
+            var d = S(19);
+            var cx = x + S(14);
+            var cy = y + S(13);
+            var circle = new RectangleF(cx, cy, d, d);
+            if (st.State == StepState.Done)
             {
-                using var fill = new SolidBrush(Theme.Blend(p.Surface, color, 0.22));
-                using var pen = new Pen(color, S(2));
+                using var fill = new SolidBrush(p.Accent);
                 g.FillEllipse(fill, circle);
-                g.DrawEllipse(pen, circle);
             }
             else
             {
-                using var fill = new SolidBrush(color);
-                g.FillEllipse(fill, circle);
+                using var pen = new Pen(st.State == StepState.Pending ? p.Muted : color, S(1.6f));
+                g.DrawEllipse(pen, circle);
             }
 
             var glyph = st.State switch
@@ -101,44 +113,36 @@ public sealed class StepperControl : Control
                 StepState.Done => Theme.Glyph.Check,
                 StepState.Failed => Theme.Glyph.Cancel,
                 StepState.Warning => "!",
+                StepState.Active => "",
                 _ => (i + 1).ToString(),
             };
-            var glyphFont = st.State is StepState.Done or StepState.Failed ? Theme.IconFont(9.5f) : Theme.UiFont(9.5f, FontStyle.Bold);
-            var glyphColor = st.State switch
+            if (glyph.Length > 0)
             {
-                StepState.Pending => p.SubText,
-                StepState.Active => color,
-                _ => p.IsDark ? p.Background : Color.White,
-            };
-            TextRenderer.DrawText(g, glyph, glyphFont, Rectangle.Round(circle), glyphColor,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                var glyphFont = st.State is StepState.Done or StepState.Failed ? Theme.IconFont(8f) : Theme.UiFont(8.5f, FontStyle.Bold);
+                var glyphColor = st.State switch
+                {
+                    StepState.Done => p.OnAccent,
+                    StepState.Pending => p.Muted,
+                    _ => color,
+                };
+                TextRenderer.DrawText(g, glyph, glyphFont, Rectangle.Round(circle), glyphColor,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            }
+            else
+            {
+                // 진행 중: 원 안을 점 하나로 채워 "돌고 있음"을 나타낸다(애니메이션은 쓰지 않는다).
+                using var dot = new SolidBrush(color);
+                g.FillEllipse(dot, new RectangleF(cx + d / 2 - S(3), cy + d / 2 - S(3), S(6), S(6)));
+            }
 
-            var textX = (int)(x + d + S(10));
-            var textW = (int)Math.Max(10, colW - d - S(18));
-            var titleRect = new Rectangle(textX, (int)(cy - S(19)), textW, (int)S(20));
-            TextRenderer.DrawText(g, st.Title, Theme.UiFont(10f, FontStyle.Bold), titleRect,
+            var tx = (int)(cx + d + S(9));
+            var tw = Math.Max((int)S(40), (int)(x + colW - S(12)) - tx);
+            TextRenderer.DrawText(g, st.Title, Theme.UiFont(9.5f, FontStyle.Bold), new Rectangle(tx, (int)cy, tw, (int)S(19)),
                 st.State == StepState.Pending ? p.SubText : p.Text,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
-            var detailRect = new Rectangle(textX, (int)(cy + S(1)), textW, (int)S(18));
-            TextRenderer.DrawText(g, st.Detail, Theme.UiFont(9f), detailRect,
+            TextRenderer.DrawText(g, st.Detail, Theme.UiFont(8.5f), new Rectangle((int)(x + S(14)), (int)(cy + S(23)), (int)(colW - S(26)), (int)S(17)),
                 st.State is StepState.Failed or StepState.Warning ? color : p.SubText,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
-
-            if (st.Progress is { } prog && st.State == StepState.Active)
-            {
-                var barY = cy + S(24);
-                var bar = new RectangleF(textX, barY, textW - S(12), S(4));
-                using var track = Drawing.RoundedRect(bar, S(2));
-                using var trackBrush = new SolidBrush(p.SurfaceAlt);
-                g.FillPath(trackBrush, track);
-                if (prog > 0)
-                {
-                    var fillRect = new RectangleF(bar.X, bar.Y, Math.Max(S(4), (float)(bar.Width * prog)), bar.Height);
-                    using var fillPath = Drawing.RoundedRect(fillRect, S(2));
-                    using var fillBrush = new SolidBrush(color);
-                    g.FillPath(fillBrush, fillPath);
-                }
-            }
         }
     }
 }
@@ -224,6 +228,70 @@ public sealed class StatusBanner : Control
 
     public BannerKind Kind => _kind;
 
+    private readonly List<FlatButton> _buttons = new();
+
+    /// <summary>안내 줄 오른쪽에 둘 행동 버튼. 비워서 부르면 없앤다.</summary>
+    public void SetActions(params (string Text, bool Primary, Action OnClick)[] actions)
+    {
+        foreach (var b in _buttons) { Controls.Remove(b); b.Dispose(); }
+        _buttons.Clear();
+        foreach (var a in actions)
+        {
+            var b = new FlatButton
+            {
+                Text = a.Text,
+                Variant = a.Primary ? ButtonVariant.Secondary : ButtonVariant.Ghost,
+                Font = Theme.UiFont(9f),
+            };
+            var onClick = a.OnClick;
+            b.Click += (_, _) => onClick();
+            _buttons.Add(b);
+            Controls.Add(b);
+        }
+        LayoutButtons();
+        Invalidate();
+    }
+
+    /// <summary>자체검사용: 지금 걸려 있는 행동 버튼 글자.</summary>
+    public IReadOnlyList<string> ActionTexts => _buttons.Select(b => b.Text).ToList();
+
+    /// <summary>주어진 폭에서 문구가 다 들어가는 높이.</summary>
+    public int PreferredHeight(int width)
+    {
+        float S(float v) => Drawing.Scale(this, v);
+        var textW = Math.Max((int)S(120), width - (int)S(62) - ButtonsWidth());
+        var h = TextRenderer.MeasureText(Text, Font, new Size(textW, 0), TextFormatFlags.WordBreak | TextFormatFlags.NoPadding).Height;
+        return Math.Max((int)S(50), h + (int)S(22));
+    }
+
+    private int ButtonsWidth()
+    {
+        if (_buttons.Count == 0) return 0;
+        var gap = (int)Drawing.Scale(this, 7);
+        var w = 0;
+        foreach (var b in _buttons) w += b.PreferredWidth() + gap;
+        return w + gap;
+    }
+
+    private void LayoutButtons()
+    {
+        if (_buttons.Count == 0) return;
+        float S(float v) => Drawing.Scale(this, v);
+        var h = (int)S(32);
+        var gap = (int)S(7);
+        var x = Width - gap;
+        for (var i = _buttons.Count - 1; i >= 0; i--)
+        {
+            var b = _buttons[i];
+            b.Size = new Size(b.PreferredWidth(), h);
+            x -= b.Width;
+            b.Location = new Point(x, (Height - h) / 2);
+            x -= gap;
+        }
+    }
+
+    protected override void OnResize(EventArgs e) { LayoutButtons(); base.OnResize(e); }
+
     public void Set(string text, BannerKind kind)
     {
         Text = text;
@@ -273,7 +341,7 @@ public sealed class StatusBanner : Control
         }
         TextRenderer.DrawText(g, glyph, Theme.IconFont(13f), new Rectangle((int)S(16), 0, (int)S(24), Height), color,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-        var textRect = new Rectangle((int)S(50), (int)S(4), Width - (int)S(62), Height - (int)S(8));
+        var textRect = new Rectangle((int)S(50), (int)S(4), Math.Max((int)S(80), Width - (int)S(62) - ButtonsWidth()), Height - (int)S(8));
         TextRenderer.DrawText(g, Text, Font, textRect, p.Text,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
     }

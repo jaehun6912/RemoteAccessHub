@@ -47,6 +47,12 @@ public sealed class FlowTracker
 
     public IReadOnlyList<StepInfo> Steps => new[] { Login, Wake, Boot, Remote };
 
+    /// <summary>지금 진행 중인 단계(없으면 null).</summary>
+    public StepInfo? ActiveStep => Steps.FirstOrDefault(s => s.State == StepState.Active);
+
+    /// <summary>실패한 단계(없으면 null). 뒤쪽 단계가 더 중요하므로 마지막 실패를 돌려준다.</summary>
+    public StepInfo? FailedStep => Steps.LastOrDefault(s => s.State == StepState.Failed);
+
     /// <summary>이전 화면과의 호환(자체검사·진단): "WOL 버튼 클릭: 완료" 형식.</summary>
     public string WolClickText { get; private set; } = "WOL 버튼 클릭: -";
     public string WolRouterText { get; private set; } = "공유기 처리: -";

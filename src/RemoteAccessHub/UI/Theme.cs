@@ -183,6 +183,7 @@ public static class Theme
         public const string Settings = "";
         public const string More = "";
         public const string ChevronDown = "";
+        public const string ChevronRight = "\uE76C";
         public const string ChevronUp = "";
         public const string Cancel = "";
         public const string Check = "";

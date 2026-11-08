@@ -227,18 +227,20 @@ internal sealed class SelfTestDriver
         var kSel = await KindAsync();
         Check("선택 화면에서는 공유기 창을 닫지 않음", waitingUser && _form.IsBrowserExpanded && kSel == RouterPageKind.ModeSelect,
             $"page={kSel} expanded={_form.IsBrowserExpanded} status='{_form.StatusText}'");
-        var popupWhileSelect = _form.ShowModePopup(wakeFirst: false);
-        popupWhileSelect?.Close();
-        Check("UI: 관리 화면 준비 전([관리도구] 선택 대기)에는 [PC 켜고 접속]·[PC 켜기]·[PC 접속] 비활성",
-            !_form.WakeEnabled && !_form.WakeConnectEnabled && !_form.ConnectEnabled && popupWhileSelect == null && _form.RouterPillText.Contains("관리도구 선택 필요"),
-            $"wake={_form.WakeEnabled} wakeConnect={_form.WakeConnectEnabled} connect={_form.ConnectEnabled} popup={popupWhileSelect != null} pill='{_form.RouterPillText}'");
+        var refusedWhileSelect = !_form.ConnectWith(ConnectMode.Direct);
+        Check("UI: 관리 화면 준비 전([관리도구] 선택 대기)에는 [PC 켜기]와 접속 방식 카드가 모두 비활성",
+            !_form.WakeEnabled && !_form.WakeConnectEnabled && !_form.ConnectEnabled && refusedWhileSelect
+                && _form.MethodCards.All(c => !c.Enabled) && _form.RouterPillText.Contains("관리도구 선택 필요"),
+            $"wake={_form.WakeEnabled} wakeConnect={_form.WakeConnectEnabled} connect={_form.ConnectEnabled} refused={refusedWhileSelect} cards={string.Join(",", _form.MethodCards.Select(c => c.Enabled))} pill='{_form.RouterPillText}'");
         await ScreenshotAsync("02-mode-select");
         await Js("window.__mock.chooseAdmin()");
         var collapsedAfterUser = await WaitUntilAsync(() => !_form.IsBrowserExpanded, TimeSpan.FromSeconds(10));
         Check("사용자가 [관리도구]를 누르면 관리 화면 확인 후 접기", collapsedAfterUser && _form.LastSettle?.Status == NavStatus.Ok,
             $"expanded={_form.IsBrowserExpanded} settle={_form.LastSettle?.Status}/{_form.LastSettle?.Method}");
-        Check("UI: 관리 화면이 준비되면 세 버튼 활성", _form.WakeEnabled && _form.WakeConnectEnabled && _form.ConnectEnabled && !_form.IsPreparingAdmin && _form.Browser.Session.IsLoggedIn,
-            $"wake={_form.WakeEnabled} wakeConnect={_form.WakeConnectEnabled} connect={_form.ConnectEnabled} preparing={_form.IsPreparingAdmin}");
+        Check("UI: 관리 화면이 준비되면 [PC 켜기]와 접속 방식 카드가 활성",
+            _form.WakeEnabled && _form.WakeConnectEnabled && _form.ConnectEnabled && !_form.IsPreparingAdmin && _form.Browser.Session.IsLoggedIn
+                && _form.PrimaryMethod?.Enabled == true,
+            $"wake={_form.WakeEnabled} wakeConnect={_form.WakeConnectEnabled} connect={_form.ConnectEnabled} preparing={_form.IsPreparingAdmin} primary={_form.PrimaryMethod?.Enabled}");
 
         // 자동 선택(접근성 버튼)
         s.AutoSelectAdminTool = true;
@@ -741,70 +743,115 @@ internal sealed class SelfTestDriver
         Check("UI: [PC 켜고 접속] — 접속 설정이 없으면 PC를 켜지 않음", !w3.Success && c3 == null && mock.Signals.Count == 0,
             $"wol={w3.Success} signals={mock.Signals.Count} status='{_form.StatusText}'");
 
-        // 4) 접속 방식 팝업: 방식별 설정만 검사, 화살표 없음, 누를 때마다 선택
+        // 4) 접속 방식 카드: 방식별 설정만 검사하고, 누르면 그 방식으로 바로 접속한다
         var direct = _form.ModeOptionState(ConnectMode.Direct);
         var vpn = _form.ModeOptionState(ConnectMode.Vpn);
-        Check("UI: 접속 방식 선택지 — 일반 접속 사용 가능, VPN은 '설정 필요'", direct.Enabled && !vpn.Enabled && vpn.Detail.StartsWith("설정 필요"),
+        Check("UI: 접속 방식 카드 — 일반 접속 사용 가능, VPN은 '설정 필요'", direct.Enabled && !vpn.Enabled && vpn.Detail.StartsWith("설정 필요"),
             $"direct={direct} vpn={vpn}");
-        Check("UI: [PC 켜고 접속]·[PC 접속] 버튼에 화살표 없음", !_form.ConnectButtonsHaveArrow && _form.WakeConnectButtonText == "PC 켜고 접속",
-            $"arrow={_form.ConnectButtonsHaveArrow} text='{_form.WakeConnectButtonText}'");
 
-        var popupDisabled = _form.ShowModePopup(wakeFirst: false);
-        await Task.Delay(300);
-        var refusedDisabled = popupDisabled != null && !popupDisabled.Choose(ConnectMode.Vpn) && _form.CurrentModePopup != null && !_form.IsBusy;
-        Check("UI: 팝업 — 설정이 없는 VPN은 고를 수 없고 창이 유지됨", refusedDisabled,
-            $"popup={(popupDisabled != null)} open={_form.CurrentModePopup != null} busy={_form.IsBusy}");
-        popupDisabled?.Close();
+        _form.RefreshUiForTest();
+        var cards = _form.MethodCards;
+        var vpnCard = cards.FirstOrDefault(c => c.Mode == ConnectMode.Vpn);
+        var refusedDisabled = !_form.ConnectWith(ConnectMode.Vpn);
         await Task.Delay(200);
+        Check("UI: 카드 — 설정이 없는 VPN은 눌러도 아무 일도 일어나지 않음",
+            refusedDisabled && vpnCard is { Enabled: false } && vpnCard.Detail.StartsWith("설정 필요") && !_form.IsBusy,
+            $"refused={refusedDisabled} enabled={vpnCard?.Enabled} detail='{vpnCard?.Detail}' busy={_form.IsBusy}");
 
         s.VpnName = savedVpn.Length > 0 ? savedVpn : "HomeVPN";
         s.VpnDesktopIp = "192.168.0.10";
-        Check("UI: VPN 설정을 채우면 VPN 선택지 사용 가능", _form.ModeOptionState(ConnectMode.Vpn).Enabled, _form.ModeOptionState(ConnectMode.Vpn).ToString());
+        _form.RefreshUiForTest();
+        Check("UI: VPN 설정을 채우면 VPN 카드 사용 가능",
+            _form.ModeOptionState(ConnectMode.Vpn).Enabled && _form.MethodCards.First(c => c.Mode == ConnectMode.Vpn).Enabled,
+            _form.ModeOptionState(ConnectMode.Vpn).ToString());
 
-        // [PC 접속] 팝업에서 VPN 선택 → 내부 IP로 접속
+        // VPN 카드 → 내부 IP로 접속
         _vpn.Connected.Add("HomeVPN");
         _port.NeverOpen = false;
         _port.OpenAfterAttempts = _port.Attempts + 1;
         launches = _rdp.LaunchCount;
-        var p1 = _form.ShowModePopup(wakeFirst: false);
-        await Task.Delay(300);
-        var heading1 = p1?.Heading ?? "";
-        var chose1 = p1 != null && p1.Choose(ConnectMode.Vpn);
+        var chose1 = _form.ConnectWith(ConnectMode.Vpn, wakeFirst: false);
         await WaitUntilAsync(() => _rdp.LaunchCount > launches && !_form.IsBusy, TimeSpan.FromSeconds(15));
-        Check("UI: [PC 접속] 팝업에서 VPN 선택 → VPN 내부 IP로 원격 데스크톱", chose1 && _rdp.LaunchCount == launches + 1 && _rdp.Launches[^1].Host == "192.168.0.10" && _form.CurrentModePopup == null,
-            $"heading='{heading1}' chose={chose1} host={(_rdp.LaunchCount > 0 ? _rdp.Launches[^1].Host : "-")} popupClosed={_form.CurrentModePopup == null}");
+        Check("UI: VPN 카드 → VPN 내부 IP로 원격 데스크톱", chose1 && _rdp.LaunchCount == launches + 1 && _rdp.Launches[^1].Host == "192.168.0.10",
+            $"chose={chose1} host={(_rdp.LaunchCount > 0 ? _rdp.Launches[^1].Host : "-")}");
 
-        // [PC 켜고 접속] 팝업에서 일반 선택 → WOL 후 공인 주소로 접속
+        // 평소 화면 사진(주 카드 + 보조 카드)
+        await ScreenshotAsync("09-method-cards");
+
+        // PC가 꺼져 있으면 같은 카드가 "PC 켜고 ..."가 되고, 누르면 WOL 후 접속한다
         mock.ClearSignals();
         _port.OpenAfterAttempts = _port.Attempts + 1;
         launches = _rdp.LaunchCount;
-        var p2 = _form.ShowModePopup(wakeFirst: true);
-        await Task.Delay(300);
-        if (!string.IsNullOrEmpty(_options.ScreenshotDirectory) && p2 != null)
+        var chose2 = _form.ConnectWith(ConnectMode.Direct, wakeFirst: true);
+        await WaitUntilAsync(() => _rdp.LaunchCount > launches && !_form.IsBusy, TimeSpan.FromSeconds(40));
+        Check("UI: PC 켜고 접속(일반) → WOL → 공인 주소로 원격 데스크톱", chose2 && mock.Signals.Count == 1 && _rdp.LaunchCount == launches + 1 && _rdp.Launches[^1].Host == "127.0.0.1" && s.LastMode == ConnectMode.Direct,
+            $"chose={chose2} signals={mock.Signals.Count} host={(_rdp.LaunchCount > 0 ? _rdp.Launches[^1].Host : "-")} last={s.LastMode}");
+
+        // 지난번에 쓴 방식이 맨 위 주 카드가 된다
+        Check("UI: 지난번에 쓴 방식이 맨 위 주 카드",
+            _form.PrimaryMethod?.Mode == ConnectMode.Direct && _form.PrimaryMethod?.Primary == true && _form.PrimaryMethod?.Badge == 1,
+            $"primary={_form.PrimaryMethod?.Mode} badge={_form.PrimaryMethod?.Badge} cards={string.Join(",", _form.MethodCards.Select(c => c.Mode))}");
+
+        // 접속 방법이 하나도 설정되지 않으면 빈 안내 카드가 뜬다
+        var savedHost = s.PublicHost;
+        var savedVpnName2 = s.VpnName;
+        var savedUseCrd = s.UseCrd;
+        s.PublicHost = "";
+        s.VpnName = "";
+        s.UseCrd = false;
+        _form.RebuildMethodsForTest();
+        var emptyShown = _form.MethodsEmptyShown;
+        var wakeStillThere = _form.WakeEnabled;
+        await ScreenshotAsync("09b-method-empty");
+        s.PublicHost = savedHost;
+        s.VpnName = savedVpnName2;
+        s.UseCrd = savedUseCrd;
+        _form.RebuildMethodsForTest();
+        Check("UI: 접속 방법이 하나도 없으면 빈 안내 카드([접속 방법 설정])가 뜨고 [PC 켜기만]은 그대로 쓸 수 있음",
+            emptyShown && wakeStillThere && !_form.MethodsEmptyShown && _form.MethodCards.Any(c => c.Enabled),
+            $"empty={emptyShown} wake={wakeStillThere} 되돌린뒤empty={_form.MethodsEmptyShown}");
+
+        // 5) 창 폭을 좁히면 단계가 2x2로, 접속 카드가 한 열로 접힌다
+        var wideWindow = _form.Width;
+        var wideCols = _form.StepColumns;
+        var allInARow = Math.Min(3, _form.MethodCards.Count);
+        var wideTwo = _form.MethodColumns;
+        var wideHeight = _form.ClientSize.Height;
+        _form.Width = _form.MinimumSize.Width;
+        await Task.Delay(400);
+        var narrowCols = _form.StepColumns;
+        var narrowTwo = _form.MethodColumns;
+        var narrowHeight = _form.ClientSize.Height;
+        var keptMinimum = _form.Width == _form.MinimumSize.Width;
+        await ScreenshotAsync("09d-narrow");
+        _form.Width = wideWindow;
+        await Task.Delay(400);
+        Check("UI: 창을 좁히면 단계가 2x2·접속 카드가 한 열로 접히고, 넓히면 되돌아옴",
+            wideCols == 4 && wideTwo == allInARow && narrowCols == 2 && narrowTwo == 1 && narrowHeight > wideHeight && keptMinimum
+                && _form.StepColumns == 4 && _form.MethodColumns == allInARow,
+            $"넓게={wideCols}칸/{wideTwo}열/h={wideHeight} 좁게={narrowCols}칸/{narrowTwo}열/h={narrowHeight} 되돌림={_form.StepColumns}칸/{_form.MethodColumns}열");
+
+        // 6) 작게 접기(미니 창)
+        _form.SetMiniMode(true);
+        await Task.Delay(400);
+        var miniShown = _form.IsMiniMode && !_form.Visible;
+        if (!string.IsNullOrEmpty(_options.ScreenshotDirectory) && _form.MiniWindowForTest is { } mini)
         {
             try
             {
-                using var bmp = new Bitmap(p2.Width, p2.Height);
-                p2.DrawToBitmap(bmp, new Rectangle(0, 0, p2.Width, p2.Height));
-                bmp.Save(Path.Combine(_options.ScreenshotDirectory, "09-mode-popup.png"), System.Drawing.Imaging.ImageFormat.Png);
+                using var bmp = new Bitmap(mini.Width, mini.Height);
+                mini.DrawToBitmap(bmp, new Rectangle(0, 0, mini.Width, mini.Height));
+                bmp.Save(Path.Combine(_options.ScreenshotDirectory, "09e-mini.png"), System.Drawing.Imaging.ImageFormat.Png);
             }
             catch { /* ignore */ }
         }
-        var chose2 = p2 != null && p2.Choose(ConnectMode.Direct);
-        await WaitUntilAsync(() => _rdp.LaunchCount > launches && !_form.IsBusy, TimeSpan.FromSeconds(40));
-        Check("UI: [PC 켜고 접속] 팝업에서 일반 선택 → WOL → 공인 주소로 원격 데스크톱", chose2 && mock.Signals.Count == 1 && _rdp.LaunchCount == launches + 1 && _rdp.Launches[^1].Host == "127.0.0.1" && s.LastMode == ConnectMode.Direct,
-            $"heading='{p2?.Heading}' chose={chose2} signals={mock.Signals.Count} host={(_rdp.LaunchCount > 0 ? _rdp.Launches[^1].Host : "-")} last={s.LastMode}");
+        _form.SetMiniMode(false);
+        await Task.Delay(400);
+        Check("UI: 작게 접기 — 미니 창만 남고, 되돌리면 본 창이 돌아옴",
+            miniShown && !_form.IsMiniMode && _form.Visible,
+            $"접힘={miniShown} 되돌린뒤 미니={_form.IsMiniMode} 본창={_form.Visible}");
 
-        // 팝업은 Esc로 닫히고 아무것도 실행하지 않음
-        launches = _rdp.LaunchCount;
-        var p3 = _form.ShowModePopup(wakeFirst: false);
-        await Task.Delay(300);
-        p3?.Close();
-        await Task.Delay(500);
-        Check("UI: 팝업을 닫으면 아무 작업도 시작하지 않음", p3 != null && _form.CurrentModePopup == null && !_form.IsBusy && _rdp.LaunchCount == launches,
-            $"busy={_form.IsBusy} launches+{_rdp.LaunchCount - launches}");
-
-        // 5) 기록 창, 공유기 화면(별도 창)
+        // 7) 기록 창, 공유기 화면(별도 창)
         var h0 = _form.ClientSize.Height;
         _form.SetLogVisible(true);
         var h1 = _form.ClientSize.Height;
@@ -1090,6 +1137,7 @@ internal sealed class SelfTestDriver
             _port.NeverOpen = false;
             _port.OpenAfterAttempts = 0;
             await _form.CheckPowerNowAsync();
+            _form.RefreshUiForTest();
             var blinkOn = _form.ConnectBlinking;
             await WaitUntilAsync(() => _form.ConnectHighlighted, TimeSpan.FromSeconds(3));
             var litUp = _form.ConnectHighlighted;
@@ -1097,7 +1145,7 @@ internal sealed class SelfTestDriver
             var wentBack = !_form.ConnectHighlighted;
             _port.NeverOpen = true;
             await _form.CheckPowerNowAsync();
-            Check("전원 배지: PC가 켜진 것이 확인될 때만 [PC 접속]이 깜빡임",
+            Check("전원 배지: PC가 켜진 것이 확인될 때만 주 접속 카드가 깜빡임",
                 blinkOn && litUp && wentBack && !_form.ConnectBlinking && !_form.ConnectHighlighted,
                 $"켜짐에서 깜빡임={blinkOn} 강조됨={litUp} 되돌아옴={wentBack} 응답없음에서 깜빡임={_form.ConnectBlinking}");
 
@@ -1196,32 +1244,21 @@ internal sealed class SelfTestDriver
                 d.Success && d.PcRespondedOnPort && _port.Attempts > attempts && _crd.OpenCount == openedBefore + 1 && _form.Flow.Boot.State == UI.StepState.Done,
                 $"stage={d.Stage} ports+{_port.Attempts - attempts} boot={_form.Flow.Boot}");
 
-            // 5) 접속 방식 팝업에 세 번째 선택지가 생기고, 골라서 바로 열 수 있다
+            // 5) 접속 방식 카드가 세 장이 되고, 눌러서 바로 열 수 있다
             s.CrdBootCheckMode = "none";
+            _form.RebuildMethodsForTest();
             var count = _form.ModeOptionCount;
             var opt = _form.ModeOptionState(ConnectMode.Crd);
+            var rows = _form.MethodCards.Count;
+            var crdCard = _form.MethodCards.FirstOrDefault(c => c.Mode == ConnectMode.Crd);
             openedBefore = _crd.OpenCount;
-            var popup = _form.ShowModePopup(wakeFirst: false);
-            await Task.Delay(300);
-            if (!string.IsNullOrEmpty(_options.ScreenshotDirectory) && popup != null)
-            {
-                try
-                {
-                    Directory.CreateDirectory(_options.ScreenshotDirectory);
-                    using var bmp = new Bitmap(popup.Width, popup.Height);
-                    popup.DrawToBitmap(bmp, new Rectangle(0, 0, popup.Width, popup.Height));
-                    bmp.Save(Path.Combine(_options.ScreenshotDirectory, "09b-mode-popup-crd.png"), System.Drawing.Imaging.ImageFormat.Png);
-                }
-                catch { /* ignore */ }
-            }
-            var rows = popup?.OptionCount ?? 0;
-            var chose = popup != null && popup.Choose(ConnectMode.Crd);
+            await ScreenshotAsync("09c-method-cards-crd");
+            var chose = _form.ConnectWith(ConnectMode.Crd, wakeFirst: false);
             await WaitUntilAsync(() => _crd.OpenCount > openedBefore && !_form.IsBusy, TimeSpan.FromSeconds(15));
-            Check("UI: 접속 방식 팝업에 크롬 원격 데스크톱 선택지 추가(골라서 바로 열기)",
-                count == 3 && rows == 3 && opt.Enabled && opt.Title == "크롬 원격 데스크톱" && chose
+            Check("UI: 접속 방식 카드에 크롬 원격 데스크톱 추가(눌러서 바로 열기)",
+                count == 3 && rows == 3 && opt.Enabled && opt.Title == "크롬 원격 데스크톱" && crdCard is { Enabled: true } && chose
                     && _crd.OpenCount == openedBefore + 1 && s.LastMode == ConnectMode.Crd,
-                $"options={count} rows={rows} detail='{opt.Detail}' chose={chose} last={s.LastMode}");
-            _form.CurrentModePopup?.Close();
+                $"options={count} cards={rows} detail='{opt.Detail}' chose={chose} last={s.LastMode}");
             await Task.Delay(200);
 
             // 6) 앱이 설치된 PC와 아닌 PC에서 안내가 다른지(가짜 실행기로 양쪽을 흉내 낸다)
